@@ -1,0 +1,94 @@
+{
+  "read": {
+    "prefixes": [
+      "/boot",
+      "/etc/passwd",
+      "/etc/group",
+      "/etc/shadow",
+      "/etc/ssh/",
+      "/etc/profile",
+      "/etc/sudoers",
+      "/etc/pam.conf",
+      "/etc/bashrc",
+      "/etc/csh.cshrc",
+      "/etc/csh.login"
+    ],
+    "home_prefixes": [
+      ".ssh/",
+      ".config/"
+    ],
+    "suffixes": [
+      ".env",
+      ".env.local",
+      ".env.production",
+      ".env.development",
+      ".env.test",
+      ".bashrc",
+      ".zshrc",
+      ".zprofile",
+      ".bash_profile",
+      ".bash_login",
+      ".bash_logout",
+      ".cshrc",
+      ".cshdirs",
+      ".profile",
+      ".login",
+      ".logout",
+      ".history",
+      ".bash_history",
+      ".zsh_history",
+      ".pem",
+      ".key",
+      ".npmrc",
+      ".pypirc",
+      ".netrc"
+    ]
+  },
+  "write": {
+    "prefixes": [
+      "/etc",
+      "/boot",
+      "/lib",
+      "/lib64",
+      "/bin",
+      "/usr/lib",
+      "/usr/local/lib",
+      "/usr/local/sbin",
+      "/usr/local/bin",
+      "/usr/bin",
+      "/usr/sbin",
+      "/var/log",
+      "/dev/log"
+    ],
+    "home_prefixes": [
+      ".ssh/",
+      ".config/"
+    ],
+    "suffixes": [
+      ".env",
+      ".env.local",
+      ".env.production",
+      ".env.development",
+      ".env.test",
+      ".bashrc",
+      ".zshrc",
+      ".zprofile",
+      ".bash_profile",
+      ".bash_login",
+      ".bash_logout",
+      ".cshrc",
+      ".cshdirs",
+      ".profile",
+      ".login",
+      ".logout",
+      ".history",
+      ".bash_history",
+      ".zsh_history",
+      ".pem",
+      ".key",
+      ".npmrc",
+      ".pypirc",
+      ".netrc"
+    ]
+  }
+}

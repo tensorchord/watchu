@@ -1,0 +1,66 @@
+version: "2"
+linters:
+  enable:
+    - staticcheck
+    - bodyclose  # false positive https://github.com/timakin/bodyclose/issues/30
+    - copyloopvar
+    - errorlint
+    - misspell
+    - sqlclosecheck
+    - unconvert
+    - unparam
+    - durationcheck
+    - errname
+    - fatcontext
+    - forbidigo
+    - gocritic
+    - govet
+    - importas
+    - ineffassign
+    - makezero
+    - noctx
+    - nolintlint
+    - revive
+    - testifylint
+    - unused
+    - usestdlibvars
+    - whitespace
+  settings:
+    gocritic:
+      settings:
+        ifElseChain:
+          minThreshold: 3
+    revive:
+      rules:
+        - name: indent-error-flow
+    forbidigo:
+      forbid:
+        - pattern: ^context\.WithCancel(# use context\.WithCancelCause instead)?$
+        - pattern: ^context\.WithDeadline(# use context\.WithDeadline instead)?$
+        - pattern: ^context\.WithTimeout(# use context\.WithTimeoutCause instead)?$
+        - pattern: ^ctx\.Err(# use context\.Cause instead)?$
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/tensorchord/watchu/
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
