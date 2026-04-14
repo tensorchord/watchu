@@ -35,6 +35,18 @@ type stdioInflightRead struct {
 	Fd    uint64
 }
 
+// Names of all BPF objects in the ELF.
+//
+// Used for safe lookups in a Collection or CollectionSpec.
+const (
+	stdioMapFakeEventMap          = "_fake_event_map"
+	stdioMapEvents                = "events"
+	stdioMapInflight              = "inflight"
+	stdioProgTracepointEnterRead  = "tracepoint_enter_read"
+	stdioProgTracepointEnterWrite = "tracepoint_enter_write"
+	stdioProgTracepointExitRead   = "tracepoint_exit_read"
+)
+
 // loadStdio returns the embedded CollectionSpec for stdio.
 func loadStdio() (*ebpf.CollectionSpec, error) {
 	reader := bytes.NewReader(_StdioBytes)

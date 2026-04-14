@@ -35,6 +35,18 @@ type boringEvent struct {
 	_           [7]byte
 }
 
+// Names of all BPF objects in the ELF.
+//
+// Used for safe lookups in a Collection or CollectionSpec.
+const (
+	boringMapFakeEventMap             = "_fake_event_map"
+	boringMapEvents                   = "events"
+	boringMapStartMap                 = "start_map"
+	boringProgProbeBoringSslReadEntry = "probe_boring_ssl_read_entry"
+	boringProgProbeBoringSslReadExit  = "probe_boring_ssl_read_exit"
+	boringProgProbeBoringSslWriteExit = "probe_boring_ssl_write_exit"
+)
+
 // loadBoring returns the embedded CollectionSpec for boring.
 func loadBoring() (*ebpf.CollectionSpec, error) {
 	reader := bytes.NewReader(_BoringBytes)

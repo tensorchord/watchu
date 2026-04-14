@@ -21,6 +21,18 @@ type tcpconnConnectMeta struct {
 	Comm     [16]int8
 }
 
+// Names of all BPF objects in the ELF.
+//
+// Used for safe lookups in a Collection or CollectionSpec.
+const (
+	tcpconnMapEvents             = "events"
+	tcpconnMapInflightConnect    = "inflight_connect"
+	tcpconnProgTraceTcpClose     = "trace_tcp_close"
+	tcpconnProgTraceTcpSetState  = "trace_tcp_set_state"
+	tcpconnProgTraceTcpV4Connect = "trace_tcp_v4_connect"
+	tcpconnProgTraceTcpV6Connect = "trace_tcp_v6_connect"
+)
+
 // loadTcpconn returns the embedded CollectionSpec for tcpconn.
 func loadTcpconn() (*ebpf.CollectionSpec, error) {
 	reader := bytes.NewReader(_TcpconnBytes)

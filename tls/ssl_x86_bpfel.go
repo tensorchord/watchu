@@ -43,6 +43,22 @@ type sslEvent struct {
 	_           [7]byte
 }
 
+// Names of all BPF objects in the ELF.
+//
+// Used for safe lookups in a Collection or CollectionSpec.
+const (
+	sslMapFakeEventMap         = "_fake_event_map"
+	sslMapEvents               = "events"
+	sslMapStartExMap           = "start_ex_map"
+	sslMapStartMap             = "start_map"
+	sslProgProbeSslReadEntry   = "probe_ssl_read_entry"
+	sslProgProbeSslReadExEntry = "probe_ssl_read_ex_entry"
+	sslProgProbeSslReadExExit  = "probe_ssl_read_ex_exit"
+	sslProgProbeSslReadExit    = "probe_ssl_read_exit"
+	sslProgProbeSslWriteExExit = "probe_ssl_write_ex_exit"
+	sslProgProbeSslWriteExit   = "probe_ssl_write_exit"
+)
+
 // loadSsl returns the embedded CollectionSpec for ssl.
 func loadSsl() (*ebpf.CollectionSpec, error) {
 	reader := bytes.NewReader(_SslBytes)

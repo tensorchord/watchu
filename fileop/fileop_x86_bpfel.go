@@ -43,6 +43,36 @@ type fileopPathValue struct {
 	_          [7]byte
 }
 
+// Names of all BPF objects in the ELF.
+//
+// Used for safe lookups in a Collection or CollectionSpec.
+const (
+	fileopMapFakeEventMap       = "_fake_event_map"
+	fileopMapEvents             = "events"
+	fileopMapFdPaths            = "fd_paths"
+	fileopMapInflightOpen       = "inflight_open"
+	fileopMapInflightWrite      = "inflight_write"
+	fileopMapPathHeap           = "path_heap"
+	fileopProgTraceClose        = "trace_close"
+	fileopProgTraceDelete       = "trace_delete"
+	fileopProgTraceEnterOpen    = "trace_enter_open"
+	fileopProgTraceEnterOpenat  = "trace_enter_openat"
+	fileopProgTraceEnterOpenat2 = "trace_enter_openat2"
+	fileopProgTraceExitOpen     = "trace_exit_open"
+	fileopProgTraceExitOpenat   = "trace_exit_openat"
+	fileopProgTraceExitOpenat2  = "trace_exit_openat2"
+	fileopProgTraceExitWrite    = "trace_exit_write"
+	fileopProgTraceLink         = "trace_link"
+	fileopProgTraceLinkat       = "trace_linkat"
+	fileopProgTraceMmap         = "trace_mmap"
+	fileopProgTraceRename       = "trace_rename"
+	fileopProgTraceRenameat     = "trace_renameat"
+	fileopProgTraceRenameat2    = "trace_renameat2"
+	fileopProgTraceSymlink      = "trace_symlink"
+	fileopProgTraceSymlinkat    = "trace_symlinkat"
+	fileopProgTraceWrite        = "trace_write"
+)
+
 // loadFileop returns the embedded CollectionSpec for fileop.
 func loadFileop() (*ebpf.CollectionSpec, error) {
 	reader := bytes.NewReader(_FileopBytes)
