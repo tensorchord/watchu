@@ -108,6 +108,59 @@ func TestPolicyMatchesWriteSuffixesAndRenameTargets(t *testing.T) {
 	}
 }
 
+func TestPolicyMatchesLinkSourcesAndTargets(t *testing.T) {
+	t.Parallel()
+
+	policy := Policy{
+		Read: MatchPolicy{
+			Prefixes:     []string{"/etc/"},
+			HomePrefixes: []string{".ssh/"},
+			Suffixes:     []string{".pem"},
+		},
+		Write: MatchPolicy{
+			Prefixes:     []string{"/etc/", "/var/log/"},
+			HomePrefixes: []string{".config/"},
+			Suffixes:     []string{".bashrc"},
+		},
+	}
+
+	tests := []struct {
+		name string
+		raw  *export.RawFileOp
+		want bool
+	}{
+		{
+			name: "hardlink from sensitive read path",
+			raw:  &export.RawFileOp{Op: "hardlink", Path: "/etc/shadow", NewPath: "/tmp/shadow-copy"},
+			want: true,
+		},
+		{
+			name: "symlink to sensitive absolute target",
+			raw:  &export.RawFileOp{Op: "symlink", Path: "/root/.ssh/id_ed25519", NewPath: "/tmp/id-link"},
+			want: true,
+		},
+		{
+			name: "symlink into sensitive write path",
+			raw:  &export.RawFileOp{Op: "symlink", Path: "/tmp/payload", NewPath: "/etc/ld.so.preload"},
+			want: true,
+		},
+		{
+			name: "link outside policy",
+			raw:  &export.RawFileOp{Op: "hardlink", Path: "/tmp/source", NewPath: "/tmp/dest"},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := policy.Matches(tt.raw); got != tt.want {
+				t.Fatalf("Matches(%+v) = %v, want %v", tt.raw, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestLoadPolicyReadsExpandedFields(t *testing.T) {
 	t.Parallel()
 

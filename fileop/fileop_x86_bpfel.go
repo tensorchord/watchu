@@ -94,10 +94,14 @@ type fileopProgramSpecs struct {
 	TraceExitOpenat   *ebpf.ProgramSpec `ebpf:"trace_exit_openat"`
 	TraceExitOpenat2  *ebpf.ProgramSpec `ebpf:"trace_exit_openat2"`
 	TraceExitWrite    *ebpf.ProgramSpec `ebpf:"trace_exit_write"`
+	TraceLink         *ebpf.ProgramSpec `ebpf:"trace_link"`
+	TraceLinkat       *ebpf.ProgramSpec `ebpf:"trace_linkat"`
 	TraceMmap         *ebpf.ProgramSpec `ebpf:"trace_mmap"`
 	TraceRename       *ebpf.ProgramSpec `ebpf:"trace_rename"`
 	TraceRenameat     *ebpf.ProgramSpec `ebpf:"trace_renameat"`
 	TraceRenameat2    *ebpf.ProgramSpec `ebpf:"trace_renameat2"`
+	TraceSymlink      *ebpf.ProgramSpec `ebpf:"trace_symlink"`
+	TraceSymlinkat    *ebpf.ProgramSpec `ebpf:"trace_symlinkat"`
 	TraceWrite        *ebpf.ProgramSpec `ebpf:"trace_write"`
 }
 
@@ -177,10 +181,14 @@ type fileopPrograms struct {
 	TraceExitOpenat   *ebpf.Program `ebpf:"trace_exit_openat"`
 	TraceExitOpenat2  *ebpf.Program `ebpf:"trace_exit_openat2"`
 	TraceExitWrite    *ebpf.Program `ebpf:"trace_exit_write"`
+	TraceLink         *ebpf.Program `ebpf:"trace_link"`
+	TraceLinkat       *ebpf.Program `ebpf:"trace_linkat"`
 	TraceMmap         *ebpf.Program `ebpf:"trace_mmap"`
 	TraceRename       *ebpf.Program `ebpf:"trace_rename"`
 	TraceRenameat     *ebpf.Program `ebpf:"trace_renameat"`
 	TraceRenameat2    *ebpf.Program `ebpf:"trace_renameat2"`
+	TraceSymlink      *ebpf.Program `ebpf:"trace_symlink"`
+	TraceSymlinkat    *ebpf.Program `ebpf:"trace_symlinkat"`
 	TraceWrite        *ebpf.Program `ebpf:"trace_write"`
 }
 
@@ -195,10 +203,14 @@ func (p *fileopPrograms) Close() error {
 		p.TraceExitOpenat,
 		p.TraceExitOpenat2,
 		p.TraceExitWrite,
+		p.TraceLink,
+		p.TraceLinkat,
 		p.TraceMmap,
 		p.TraceRename,
 		p.TraceRenameat,
 		p.TraceRenameat2,
+		p.TraceSymlink,
+		p.TraceSymlinkat,
 		p.TraceWrite,
 	)
 }

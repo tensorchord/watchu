@@ -27,6 +27,8 @@ const (
 	fileOpRename
 	fileOpMmapRead
 	fileOpMmapWrite
+	fileOpHardlink
+	fileOpSymlink
 )
 
 const (
@@ -95,6 +97,10 @@ func attachFileOpProbes(objs fileopObjects) ([]link.Link, error) {
 		{group: "syscalls", name: "sys_enter_rename", prog: objs.TraceRename},
 		{group: "syscalls", name: "sys_enter_renameat", prog: objs.TraceRenameat},
 		{group: "syscalls", name: "sys_enter_renameat2", prog: objs.TraceRenameat2},
+		{group: "syscalls", name: "sys_enter_link", prog: objs.TraceLink},
+		{group: "syscalls", name: "sys_enter_linkat", prog: objs.TraceLinkat},
+		{group: "syscalls", name: "sys_enter_symlink", prog: objs.TraceSymlink},
+		{group: "syscalls", name: "sys_enter_symlinkat", prog: objs.TraceSymlinkat},
 	}
 
 	links := make([]link.Link, 0, len(probes))
@@ -203,6 +209,10 @@ func toRawFileOp(event *fileopEvent) *export.RawFileOp {
 		raw.Op = "mmap_read"
 	case fileOpMmapWrite:
 		raw.Op = "mmap_write"
+	case fileOpHardlink:
+		raw.Op = "hardlink"
+	case fileOpSymlink:
+		raw.Op = "symlink"
 	default:
 		return nil
 	}
