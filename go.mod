@@ -5,7 +5,7 @@ go 1.25.1
 require (
 	github.com/charmbracelet/bubbletea v1.3.4
 	github.com/charmbracelet/lipgloss v1.1.0
-	github.com/cilium/ebpf v0.21.0
+	github.com/cilium/ebpf v0.21.1-0.20260413095610-4c48d03c2ab3
 	github.com/google/uuid v1.6.0
 	github.com/klauspost/compress v1.18.5
 	github.com/maypok86/otter/v2 v2.3.0

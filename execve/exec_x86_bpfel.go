@@ -53,6 +53,24 @@ type execProc struct {
 	_                 [7]byte
 }
 
+// Names of all BPF objects in the ELF.
+//
+// Used for safe lookups in a Collection or CollectionSpec.
+const (
+	execMapFakeDynlibMap               = "_fake_dynlib_map"
+	execMapFakeProcMap                 = "_fake_proc_map"
+	execMapDynlibEvents                = "dynlib_events"
+	execMapExecHeap                    = "exec_heap"
+	execMapInflightMmap                = "inflight_mmap"
+	execMapInflightOpen                = "inflight_open"
+	execMapProcEvents                  = "proc_events"
+	execProgTracepointSchedProcessExec = "tracepoint_sched_process_exec"
+	execProgTracepointSysEnterClose    = "tracepoint_sys_enter_close"
+	execProgTracepointSysEnterMmap     = "tracepoint_sys_enter_mmap"
+	execProgTracepointSysEnterOpenat   = "tracepoint_sys_enter_openat"
+	execProgTracepointSysExitOpenat    = "tracepoint_sys_exit_openat"
+)
+
 // loadExec returns the embedded CollectionSpec for exec.
 func loadExec() (*ebpf.CollectionSpec, error) {
 	reader := bytes.NewReader(_ExecBytes)

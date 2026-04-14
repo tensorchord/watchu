@@ -34,6 +34,17 @@ type pgEvent struct {
 	_           [7]byte
 }
 
+// Names of all BPF objects in the ELF.
+//
+// Used for safe lookups in a Collection or CollectionSpec.
+const (
+	pgMapFakeEventMap           = "_fake_event_map"
+	pgMapEvents                 = "events"
+	pgMapInflight               = "inflight"
+	pgProgTracepointEnterClose  = "tracepoint_enter_close"
+	pgProgTracepointEnterSendto = "tracepoint_enter_sendto"
+)
+
 // loadPg returns the embedded CollectionSpec for pg.
 func loadPg() (*ebpf.CollectionSpec, error) {
 	reader := bytes.NewReader(_PgBytes)
