@@ -23,6 +23,8 @@ enum file_op_type {
     FILE_OP_RENAME     = 4,
     FILE_OP_MMAP_READ  = 5,
     FILE_OP_MMAP_WRITE = 6,
+    FILE_OP_HARDLINK   = 7,
+    FILE_OP_SYMLINK    = 8,
 };
 
 enum fd_seen_flag {
@@ -143,6 +145,42 @@ struct enter_renameat2_ctx {
     long newdfd;
     const char *newname;
     unsigned int flags;
+};
+
+// ref: /sys/kernel/debug/tracing/events/syscalls/sys_enter_link/format
+struct enter_link_ctx {
+    long common;
+    long __syscall_nr;
+    const char *oldname;
+    const char *newname;
+};
+
+// ref: /sys/kernel/debug/tracing/events/syscalls/sys_enter_linkat/format
+struct enter_linkat_ctx {
+    long common;
+    long __syscall_nr;
+    long olddfd;
+    const char *oldname;
+    long newdfd;
+    const char *newname;
+    int flags;
+};
+
+// ref: /sys/kernel/debug/tracing/events/syscalls/sys_enter_symlink/format
+struct enter_symlink_ctx {
+    long common;
+    long __syscall_nr;
+    const char *oldname;
+    const char *newname;
+};
+
+// ref: /sys/kernel/debug/tracing/events/syscalls/sys_enter_symlinkat/format
+struct enter_symlinkat_ctx {
+    long common;
+    long __syscall_nr;
+    const char *oldname;
+    long newdfd;
+    const char *newname;
 };
 
 struct fd_key {
@@ -524,6 +562,75 @@ static __noinline int submit_rename_paths(const char *old_path, long old_dirfd, 
     return 0;
 }
 
+static __noinline int submit_hardlink_paths(const char *old_path, long old_dirfd, const char *new_path) {
+    struct event *evt;
+    u32 tgid = (u32)(bpf_get_current_pid_tgid() >> 32);
+
+    evt = bpf_ringbuf_reserve(&events, sizeof(*evt), 0);
+    if (!evt) {
+        return 0;
+    }
+    __builtin_memset(evt, 0, sizeof(*evt));
+
+    evt->timestamp_ns = bpf_ktime_get_ns();
+    evt->pid_tgid     = bpf_get_current_pid_tgid();
+    evt->uid_gid      = bpf_get_current_uid_gid();
+    evt->cgroup_id    = bpf_get_current_cgroup_id();
+    evt->bytes        = 0;
+    evt->op           = FILE_OP_HARDLINK;
+    bpf_get_current_comm(&evt->comm, sizeof(evt->comm));
+
+    if (resolve_dirfd_path(evt->path, sizeof(evt->path), tgid, old_dirfd, old_path) != 0 || is_noise_path(evt->path) ||
+        path_is_systemd_private_tmp_noise(evt->path)) {
+        bpf_ringbuf_discard(evt, 0);
+        return 0;
+    }
+
+    if (new_path && copy_user_path(evt->new_path, sizeof(evt->new_path), new_path) != 0) {
+        bpf_ringbuf_discard(evt, 0);
+        return 0;
+    }
+
+    bpf_ringbuf_submit(evt, 0);
+    return 0;
+}
+
+static __noinline int submit_symlink_paths(const char *old_path, const char *new_path, long new_dirfd) {
+    struct event *evt;
+    u32 tgid = (u32)(bpf_get_current_pid_tgid() >> 32);
+
+    evt = bpf_ringbuf_reserve(&events, sizeof(*evt), 0);
+    if (!evt) {
+        return 0;
+    }
+    __builtin_memset(evt, 0, sizeof(*evt));
+
+    evt->timestamp_ns = bpf_ktime_get_ns();
+    evt->pid_tgid     = bpf_get_current_pid_tgid();
+    evt->uid_gid      = bpf_get_current_uid_gid();
+    evt->cgroup_id    = bpf_get_current_cgroup_id();
+    evt->bytes        = 0;
+    evt->op           = FILE_OP_SYMLINK;
+    bpf_get_current_comm(&evt->comm, sizeof(evt->comm));
+
+    if (copy_user_path(evt->path, sizeof(evt->path), old_path) != 0) {
+        bpf_ringbuf_discard(evt, 0);
+        return 0;
+    }
+
+    // The symlink target string is stored verbatim in the inode. Resolve the
+    // link pathname (the destination) when we can, but keep the target itself
+    // as-is because a relative target is intentionally relative to the link.
+    if (resolve_dirfd_path(evt->new_path, sizeof(evt->new_path), tgid, new_dirfd, new_path) != 0 ||
+        is_noise_path(evt->new_path) || path_is_systemd_private_tmp_noise(evt->new_path)) {
+        bpf_ringbuf_discard(evt, 0);
+        return 0;
+    }
+
+    bpf_ringbuf_submit(evt, 0);
+    return 0;
+}
+
 static __always_inline int remember_open_path(const char *filename, long dirfd, u64 flags) {
     u64 pid_tgid = bpf_get_current_pid_tgid();
     struct path_value *path;
@@ -706,4 +813,24 @@ int trace_renameat(struct enter_renameat_ctx *ctx) {
 SEC("tracepoint/syscalls/sys_enter_renameat2")
 int trace_renameat2(struct enter_renameat2_ctx *ctx) {
     return submit_rename_paths(ctx->oldname, ctx->olddfd, ctx->newname);
+}
+
+SEC("tracepoint/syscalls/sys_enter_link")
+int trace_link(struct enter_link_ctx *ctx) {
+    return submit_hardlink_paths(ctx->oldname, AT_FDCWD, ctx->newname);
+}
+
+SEC("tracepoint/syscalls/sys_enter_linkat")
+int trace_linkat(struct enter_linkat_ctx *ctx) {
+    return submit_hardlink_paths(ctx->oldname, ctx->olddfd, ctx->newname);
+}
+
+SEC("tracepoint/syscalls/sys_enter_symlink")
+int trace_symlink(struct enter_symlink_ctx *ctx) {
+    return submit_symlink_paths(ctx->oldname, ctx->newname, AT_FDCWD);
+}
+
+SEC("tracepoint/syscalls/sys_enter_symlinkat")
+int trace_symlinkat(struct enter_symlinkat_ctx *ctx) {
+    return submit_symlink_paths(ctx->oldname, ctx->newname, ctx->newdfd);
 }

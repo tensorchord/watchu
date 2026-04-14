@@ -74,6 +74,8 @@ func (p Policy) Matches(raw *export.RawFileOp) bool {
 		// raw.NewPath may be relative because the BPF probe only fully resolves
 		// the source path. Keep matching it as best-effort auxiliary context.
 		return p.matchesWritePath(raw.Path) || p.matchesWritePath(raw.NewPath)
+	case "hardlink", "symlink":
+		return p.matchesSensitivePath(raw.Path) || p.matchesWritePath(raw.NewPath)
 	default:
 		return false
 	}
@@ -98,6 +100,10 @@ func (p Policy) matchesReadPath(path string) bool {
 
 func (p Policy) matchesWritePath(path string) bool {
 	return matchPath(path, p.Write.Prefixes, p.Write.HomePrefixes, p.Write.Suffixes)
+}
+
+func (p Policy) matchesSensitivePath(path string) bool {
+	return p.matchesReadPath(path) || p.matchesWritePath(path)
 }
 
 func matchPath(path string, prefixes []string, homePrefixes []string, suffixes []string) bool {
