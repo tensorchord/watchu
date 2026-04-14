@@ -19,7 +19,7 @@ const (
 var (
 	titleStyle       = lipgloss.NewStyle().Bold(true)
 	headerStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
-	tabActiveStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("0")).Background(lipgloss.Color("7")).Padding(0, 1)
+	tabActiveStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6")).Background(lipgloss.Color("7")).Padding(0, 1)
 	tabInactiveStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Padding(0, 1)
 	cursorStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
 	selectedStyle    = lipgloss.NewStyle()
