@@ -586,6 +586,12 @@ static __noinline int submit_hardlink_paths(const char *old_path, long old_dirfd
         return 0;
     }
 
+    // As with rename, keep the source path as the primary relevance gate and
+    // avoid a second dirfd resolution for the destination. Doing two full
+    // resolutions here risks blowing the verifier budget on real kernels. As a
+    // result, evt->new_path may remain relative for link/linkat calls that pass
+    // a relative destination path, and userspace should not treat it as
+    // guaranteed-absolute.
     if (new_path && copy_user_path(evt->new_path, sizeof(evt->new_path), new_path) != 0) {
         bpf_ringbuf_discard(evt, 0);
         return 0;
@@ -618,9 +624,11 @@ static __noinline int submit_symlink_paths(const char *old_path, const char *new
         return 0;
     }
 
-    // The symlink target string is stored verbatim in the inode. Resolve the
-    // link pathname (the destination) when we can, but keep the target itself
-    // as-is because a relative target is intentionally relative to the link.
+    // The symlink target string is stored verbatim in the inode. Keep
+    // evt->path as-is because a relative target is intentionally relative to
+    // the link itself. Resolve the link pathname (evt->new_path) when we can,
+    // but it may still remain relative for AT_FDCWD-based calls or untracked
+    // dirfds because this probe does not track task cwd.
     if (resolve_dirfd_path(evt->new_path, sizeof(evt->new_path), tgid, new_dirfd, new_path) != 0 ||
         is_noise_path(evt->new_path) || path_is_systemd_private_tmp_noise(evt->new_path)) {
         bpf_ringbuf_discard(evt, 0);

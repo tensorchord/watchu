@@ -75,6 +75,14 @@ func (p Policy) Matches(raw *export.RawFileOp) bool {
 		// the source path. Keep matching it as best-effort auxiliary context.
 		return p.matchesWritePath(raw.Path) || p.matchesWritePath(raw.NewPath)
 	case "hardlink", "symlink":
+		// Link events have the same caveat in slightly different forms:
+		// - hardlink: raw.NewPath may be relative because only the source path is
+		//   fully resolved in-kernel.
+		// - symlink: raw.Path is the link target string and may intentionally be
+		//   relative; raw.NewPath may also remain relative when cwd/dirfd
+		//   resolution is unavailable.
+		// Treat both fields as best-effort context, not guaranteed-absolute
+		// canonical paths.
 		return p.matchesSensitivePath(raw.Path) || p.matchesWritePath(raw.NewPath)
 	default:
 		return false
