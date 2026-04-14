@@ -12,6 +12,9 @@ gen_ebpf:
 build: gen_ebpf
 	@CGO_ENABLED=0 go build -o bin/app cmd/main.go
 
+build-securityinsight:
+	@CGO_ENABLED=0 go build -o bin/securityinsight cmd/securityinsight/main.go
+
 format:
 	@go fmt ./...
 	@golangci-lint fmt
