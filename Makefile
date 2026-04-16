@@ -24,3 +24,6 @@ lint-go:
 	@golangci-lint run
 
 lint: lint-ebpf lint-go
+
+test:
+	@go test ./...
