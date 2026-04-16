@@ -25,5 +25,5 @@ lint-go:
 
 lint: lint-ebpf lint-go
 
-test:
+test: gen_ebpf
 	@go test ./...
