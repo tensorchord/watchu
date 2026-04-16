@@ -27,17 +27,15 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
-    env:
-      BUILDER: ghcr.io/tensorchord/ebpf-builder:0.1.2
+    runs-on: ghcr.io/tensorchord/ebpf-builder:0.2.0
     steps:
       - uses: actions/checkout@v6
 
       - name: Build
-        run: docker run --rm -v "$PWD":/workspace -w /workspace $BUILDER bash -c "make build && make lint-ebpf"
+        run: make build && make lint-ebpf
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
 
       - name: Test
-        run: docker run --rm -v "$PWD":/workspace -w /workspace $BUILDER bash -c "make test"
+        run: make test
