@@ -27,7 +27,9 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ghcr.io/tensorchord/ebpf-builder:0.2.0
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/tensorchord/ebpf-builder:0.2.0
     steps:
       - uses: actions/checkout@v6
 
