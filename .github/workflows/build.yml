@@ -36,4 +36,4 @@ jobs:
         uses: golangci/golangci-lint-action@v9
 
       - name: Test
-        run: make test
+        run: docker run --rm -v "$PWD":/workspace -w /workspace $BUILDER bash -c "make test"
