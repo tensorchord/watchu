@@ -14,6 +14,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/google/uuid"
 	"github.com/maypok86/otter/v2"
 	"github.com/phuslu/log"
 	"golang.org/x/net/http2"
@@ -131,9 +132,11 @@ func (r *SSLRecord) Append(data []uint8, info *EventInfo) {
 type SSLStore struct {
 	Request        map[SSLKey]*SSLRecord
 	Response       map[SSLKey]*SSLRecord
+	sessions       map[SSLKey]string
 	protocolCache  *otter.Cache[SSLKey, ProtocolType]
 	reqMu          sync.Mutex
 	respMu         sync.Mutex
+	sessionMu      sync.Mutex
 	interval       time.Duration
 	http1Parser    *HTTP1Parser
 	http2Parser    *HTTP2Parser
@@ -153,11 +156,38 @@ func NewSSLStore() *SSLStore {
 		interval:       time.Second,
 		Request:        make(map[SSLKey]*SSLRecord),
 		Response:       make(map[SSLKey]*SSLRecord),
+		sessions:       make(map[SSLKey]string),
 		protocolCache:  cache,
 		http1Parser:    &HTTP1Parser{},
 		http2Parser:    NewHTTP2Parser(),
 		postgresParser: &PostgresParser{},
 	}
+}
+
+func generateSessionKey() string {
+	sessionKey, err := uuid.NewV7()
+	if err != nil {
+		return fmt.Sprintf("unknown-session-%d", time.Now().UnixNano())
+	}
+	return sessionKey.String()
+}
+
+func (s *SSLStore) ensureSessionKey(key SSLKey) string {
+	s.sessionMu.Lock()
+	defer s.sessionMu.Unlock()
+
+	if sessionKey, ok := s.sessions[key]; ok {
+		return sessionKey
+	}
+	sessionKey := generateSessionKey()
+	s.sessions[key] = sessionKey
+	return sessionKey
+}
+
+func (s *SSLStore) deleteSessionKey(key SSLKey) {
+	s.sessionMu.Lock()
+	delete(s.sessions, key)
+	s.sessionMu.Unlock()
 }
 
 // detectProtocol tries to determine the protocol type based on the initial bytes of the stream.
@@ -381,6 +411,7 @@ func (s *SSLStore) parseRequest(reqChan chan *export.RawRequest, postgresChan ch
 			select {
 			case reqChan <- &export.RawRequest{
 				ElapsedNs:     timestamp,
+				SessionKey:    s.ensureSessionKey(key),
 				PidTGid:       key.PidTgid,
 				UidGid:        key.UidGid,
 				CgroupID:      key.CgroupID,
@@ -416,6 +447,7 @@ func (s *SSLStore) parseResponse(channel chan *export.RawResponse) {
 		default:
 			log.Warn().Any("key", &key).Msg("unknown protocol, skipping parsing")
 			delete(s.Response, key)
+			s.deleteSessionKey(key)
 			continue
 		}
 		for len(record.Stream) > 0 {
@@ -424,6 +456,7 @@ func (s *SSLStore) parseResponse(channel chan *export.RawResponse) {
 			if err != nil {
 				log.Error().Any("key", &key).Bytes("buf", record.Stream[:min(len(record.Stream), consumed)]).Err(err).Msg("failed to parse TLS response")
 				delete(s.Response, key)
+				s.deleteSessionKey(key)
 				break
 			}
 			// wait for more data
@@ -474,6 +507,7 @@ func (s *SSLStore) parseResponse(channel chan *export.RawResponse) {
 				body, err := readDecodeBytes(response.Body, response.Header.Get("Content-Encoding"))
 				if err != nil {
 					log.Error().Any("key", &key).Err(err).Msg("failed to read response body")
+					s.deleteSessionKey(key)
 					continue
 				}
 				headers := flattenMaskedHeader(response.Header)
@@ -483,6 +517,7 @@ func (s *SSLStore) parseResponse(channel chan *export.RawResponse) {
 				select {
 				case channel <- &export.RawResponse{
 					ElapsedNs:     timestamp,
+					SessionKey:    s.ensureSessionKey(key),
 					PidTGid:       key.PidTgid,
 					UidGid:        key.UidGid,
 					CgroupID:      key.CgroupID,
@@ -497,6 +532,7 @@ func (s *SSLStore) parseResponse(channel chan *export.RawResponse) {
 				default:
 					log.Warn().Msg("response channel is full, dropping event")
 				}
+				s.deleteSessionKey(key)
 				break
 			}
 		}
