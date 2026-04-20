@@ -5,7 +5,7 @@ updates:
     schedule:
       interval: "monthly"
     groups:
-      collector-dependencies:
+      go-dependencies:
         patterns:
           - "*"
     commit-message:
