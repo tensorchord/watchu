@@ -1,0 +1,32 @@
+version: 2
+updates:
+  - package-ecosystem: "gomod"
+    schedule:
+      interval: "monthly"
+    groups:
+      collector-dependencies:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "chore(go)"
+    assignees:
+      - "kemingy"
+    cooldown:
+      semver-major-days: 30
+      semver-minor-days: 15
+      semver-patch-days: 7
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    groups:
+      all-actions:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "chore(actions)"
+    assignees:
+      - "kemingy"
+    cooldown:
+      default-days: 7
