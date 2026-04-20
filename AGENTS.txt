@@ -47,7 +47,7 @@
 
 - Any change to probe C code or shared eBPF headers should be followed by `make gen_ebpf`.
 
-Generated artifacts and related files
+### Generated artifacts and related files
 
 - *_x86_bpfel.go
   Go bindings generated from eBPF object files. Do not hand-edit.
