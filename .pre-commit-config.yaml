@@ -17,4 +17,5 @@ repos:
         name: code format
         language: system
         entry: make format
+        pass_filenames: false
         files: "\\.(go|c|h)$"
