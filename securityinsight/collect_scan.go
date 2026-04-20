@@ -10,8 +10,9 @@ import (
 )
 
 // CollectScan produces a compact overview of one agent run (phase 1).
-// No security rules are applied — the output is pure data aggregation
-// intended for an LLM agent to decide which areas deserve deeper inspection.
+// Red-flag rules and suspicious-sequence detection are applied to surface
+// signals upfront; the output is intended for an LLM agent to decide
+// which areas deserve deeper inspection with CollectDetail.
 func CollectScan(store *EventStore, tree *ProcessTree, rootExecID string, opts CollectOptions) (*ScanPackage, error) {
 	rootExecID = strings.TrimSpace(rootExecID)
 	if rootExecID == "" {

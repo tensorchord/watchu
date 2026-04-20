@@ -82,8 +82,12 @@ func loadFile(path string, store *EventStore) (int, error) {
 	// large embedded payloads (e.g. multi-MB LLM response bodies) are read
 	// correctly. The initial buffer size is advisory only.
 	//
+	// A per-line safety cap is applied below: lines larger than maxLineBytes are
+	// counted as malformed and skipped to avoid OOM on corrupt inputs.
+	//
 	// We avoid json.Decoder here because on a JSON syntax error it does not
 	// advance past the bad token, causing an infinite loop when called again.
+	const maxLineBytes = 16 * 1024 * 1024 // 16 MiB; larger lines are likely corrupt
 	reader := bufio.NewReaderSize(f, 256*1024)
 	malformed := 0
 
@@ -91,7 +95,9 @@ func loadFile(path string, store *EventStore) (int, error) {
 		rawLine, readErr := reader.ReadBytes('\n')
 		// Trim newline before parsing; handle last line with no trailing newline.
 		line := bytes.TrimRight(rawLine, "\r\n")
-		if len(line) > 0 {
+		if len(line) > maxLineBytes {
+			malformed++
+		} else if len(line) > 0 {
 			var env jsonlEnvelope
 			if err := json.Unmarshal(line, &env); err != nil {
 				malformed++

@@ -48,7 +48,7 @@ Common Options:
 
 Prompt Collection:
   --root-exec-id string          Collect prompt evidence for an explicit root execution ID
-  --host string                  Host to analyze (optional, defaults to auto-detect)
+  --host string                  Host to analyze (optional; empty string matches all hosts)
   --since string                 Start time in RFC3339 format (required unless --root-exec-id)
   --until string                 End time in RFC3339 format (required unless --root-exec-id)
 
@@ -135,7 +135,7 @@ func runCollectPrompt(args []string) {
 	fs := flag.NewFlagSet("collect prompt", flag.ExitOnError)
 	bf := registerBaseFlags(fs)
 	rootExecIDRaw := fs.String("root-exec-id", "", "Collect prompt evidence for an explicit root execution ID")
-	host := fs.String("host", "", "Host to analyze")
+	host := fs.String("host", "", "Host to analyze (optional; empty matches all hosts)")
 	sinceRaw := fs.String("since", "", "Start time in RFC3339 format")
 	untilRaw := fs.String("until", "", "End time in RFC3339 format")
 	if err := fs.Parse(args); err != nil {

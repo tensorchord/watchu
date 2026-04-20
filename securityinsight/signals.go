@@ -10,6 +10,7 @@ package securityinsight
 
 import (
 	"fmt"
+	"net"
 	"regexp"
 	"sort"
 	"strings"
@@ -220,6 +221,10 @@ func hasSensitivePath(s string) bool {
 }
 
 func isExternalAddr(addr string) bool {
+	// addr may arrive as "host:port"; strip port before classification.
+	if host, _, err := net.SplitHostPort(addr); err == nil {
+		addr = host
+	}
 	// loopback / link-local / private ranges → not exfil destination
 	if strings.HasPrefix(addr, "127.") ||
 		strings.HasPrefix(addr, "::1") ||
