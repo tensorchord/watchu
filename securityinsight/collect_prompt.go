@@ -2,25 +2,33 @@ package securityinsight
 
 import (
 	"fmt"
+	"net/url"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/tensorchord/watchu/export"
 )
 
-// llmAPIPatterns are URL substrings that identify LLM API endpoints.
-var llmAPIPatterns = []struct {
-	pattern  string
+// llmHostProviders maps well-known LLM API host substrings to provider names.
+// More specific entries must appear before broader ones to avoid false matches.
+// Hosts not listed here fall back to the raw host string as the provider label.
+var llmHostProviders = []struct {
+	host     string
 	provider string
 }{
-	{"/v1/chat/completions", "openai"},
-	{"/v1/completions", "openai"},
-	{"/v1/messages", "anthropic"},
-	{"/v1/responses", "openai"},
+	{"api.openai.com", "openai"},
+	{"api.anthropic.com", "anthropic"},
 	{"generativelanguage.googleapis.com", "google"},
-	{"/api/generate", "ollama"},
-	{"/api/chat", "ollama"},
-	{"/chat/completions", "azure_openai"},
+	{"openrouter.ai", "openrouter"},
+	{"api.groq.com", "groq"},
+	{"api.together.xyz", "together"},
+	{"api.fireworks.ai", "fireworks"},
+	{"api.perplexity.ai", "perplexity"},
+	{"api.deepseek.com", "deepseek"},
+	{"api.mistral.ai", "mistral"},
+	{"api.cohere.com", "cohere"},
+	{"azure.com", "azure_openai"},
 }
 
 // CollectPromptEvidence gathers bounded prompt-injection evidence from an
@@ -32,17 +40,21 @@ func CollectPromptEvidence(store *EventStore, tree *ProcessTree, host string, si
 	}
 	opts = opts.normalize()
 
-	candidates := findPromptCandidates(store, tree, host, since, until, "", opts)
+	candidates := findPromptCandidates(store, tree, promptFilter{
+		host:  host,
+		since: since,
+		until: until,
+	}, opts)
 
 	return &PromptEvidencePackage{
-		AnalysisType: "prompt",
+		AnalysisType: AnalysisTypePrompt,
 		Host:         host,
 		Since:        since.Format(time.RFC3339),
 		Until:        until.Format(time.RFC3339),
 		Goal:         "Determine whether prompt injection likely occurred within the selected host and time window.",
 		Budget:       opts.budget(),
 		TelemetrySummary: promptTelemetry(candidates),
-		Candidates:   clampCandidates(candidates, opts.MaxCandidates),
+		Candidates:   clampCandidates(candidates, opts.MaxLLMCalls),
 		Notes: []string{
 			"Prompt and HTTP payload snippets are truncated to fit the context budget.",
 			"Candidates are the highest-priority rows returned by LLM API URL pattern matching for this host and time window.",
@@ -65,10 +77,14 @@ func CollectPromptEvidenceByRootExecID(store *EventStore, tree *ProcessTree, roo
 	}
 
 	host := strings.Join(hosts, ",")
-	candidates := findPromptCandidates(store, tree, "", since, until, rootExecID, opts)
+	candidates := findPromptCandidates(store, tree, promptFilter{
+		since:      since,
+		until:      until,
+		rootExecID: rootExecID,
+	}, opts)
 
 	return &PromptEvidencePackage{
-		AnalysisType: "prompt",
+		AnalysisType: AnalysisTypePrompt,
 		Host:         host,
 		RootExecID:   rootExecID,
 		Since:        since.Format(time.RFC3339),
@@ -82,7 +98,7 @@ func CollectPromptEvidenceByRootExecID(store *EventStore, tree *ProcessTree, roo
 		},
 		Budget:           opts.budget(),
 		TelemetrySummary: promptTelemetry(candidates),
-		Candidates:       clampCandidates(candidates, opts.MaxCandidates),
+		Candidates:       clampCandidates(candidates, opts.MaxLLMCalls),
 		Notes: []string{
 			"Prompt and HTTP payload snippets are truncated to fit the context budget.",
 			"Candidates are filtered to prompt requests associated with the selected root execution.",
@@ -90,38 +106,67 @@ func CollectPromptEvidenceByRootExecID(store *EventStore, tree *ProcessTree, roo
 	}, nil
 }
 
-func findPromptCandidates(store *EventStore, tree *ProcessTree, host string, since, until time.Time, rootExecID string, opts CollectOptions) []PromptCandidate {
+// promptFilter bundles the query parameters for findPromptCandidates,
+// keeping the function signature under 4 parameters.
+type promptFilter struct {
+	host       string
+	since      time.Time
+	until      time.Time
+	rootExecID string
+}
+
+func findPromptCandidates(store *EventStore, tree *ProcessTree, f promptFilter, opts CollectOptions) []PromptCandidate {
 	var pids map[int32]struct{}
-	if rootExecID != "" {
-		pids = tree.DescendantPIDs(rootExecID)
+	if f.rootExecID != "" {
+		pids = tree.DescendantPIDs(f.rootExecID)
 	}
 
-	// index responses by pid+tid for pairing
+	// Build a sorted response index keyed by (pid, tid). Sorting by timestamp
+	// enables a consume-once cursor: each response is matched to at most one
+	// request, preventing a single response from being paired with multiple
+	// back-to-back requests on the same thread.
+	//
+	// Limitation: (pid, tid) is the finest granularity available in the current
+	// eBPF data model. Socket fd or a correlation ID would allow exact 1:1
+	// matching for HTTP/2 multiplexed streams, but those fields are not
+	// captured yet.
 	type respKey struct {
 		Pid int32
 		Tid int32
 	}
-	responseMap := make(map[respKey][]export.RecordResponse, len(store.Responses))
+	type respCursor struct {
+		resps []export.RecordResponse
+		next  int // index of the first unconsumed response
+	}
+	respIndex := make(map[respKey]*respCursor, len(store.Responses))
 	for i := range store.Responses {
 		rec := &store.Responses[i]
 		key := respKey{rec.Pid, rec.Tid}
-		responseMap[key] = append(responseMap[key], *rec)
+		if respIndex[key] == nil {
+			respIndex[key] = &respCursor{}
+		}
+		respIndex[key].resps = append(respIndex[key].resps, *rec)
+	}
+	for _, cur := range respIndex {
+		sort.Slice(cur.resps, func(i, j int) bool {
+			return cur.resps[i].Timestamp.Before(cur.resps[j].Timestamp)
+		})
 	}
 
-	var candidates []PromptCandidate
+	candidates := make([]PromptCandidate, 0, 8)
 
 	for i := range store.Requests {
 		req := &store.Requests[i]
 
 		// time window filter
-		if !since.IsZero() && req.Timestamp.Before(since) {
+		if !f.since.IsZero() && req.Timestamp.Before(f.since) {
 			continue
 		}
-		if !until.IsZero() && req.Timestamp.After(until) {
+		if !f.until.IsZero() && req.Timestamp.After(f.until) {
 			continue
 		}
 		// host filter
-		if host != "" && !hostMatches(req.Host, host) {
+		if f.host != "" && !hostMatches(req.Host, f.host) {
 			continue
 		}
 		// pid filter for root_exec_id mode
@@ -131,7 +176,7 @@ func findPromptCandidates(store *EventStore, tree *ProcessTree, host string, sin
 			}
 		}
 
-		provider := matchLLMProvider(req.URL)
+		provider := matchLLMProvider(urlHost(req.URL), req.Body)
 		if provider == "" {
 			continue
 		}
@@ -147,13 +192,18 @@ func findPromptCandidates(store *EventStore, tree *ProcessTree, host string, sin
 		// extract model from request body if possible
 		model := extractModelFromBody(req.Body)
 
-		// find closest response
+		// Consume the first response after req.Timestamp in the same pid+tid
+		// bucket. Advancing the cursor ensures each response is used at most once.
 		respBody := ""
 		key := respKey{req.Pid, req.Tid}
-		if resps, ok := responseMap[key]; ok {
-			closest := findClosestResponse(req.Timestamp, resps)
-			if closest != nil {
-				respBody = string(closest.Body)
+		if cur, ok := respIndex[key]; ok {
+			// Skip responses that arrived before this request.
+			for cur.next < len(cur.resps) && !cur.resps[cur.next].Timestamp.After(req.Timestamp) {
+				cur.next++
+			}
+			if cur.next < len(cur.resps) {
+				respBody = string(cur.resps[cur.next].Body)
+				cur.next++
 			}
 		}
 
@@ -162,9 +212,9 @@ func findPromptCandidates(store *EventStore, tree *ProcessTree, host string, sin
 			Provider:      provider,
 			Model:         model,
 			RootExecID:    candidateRootExecID,
-			PromptSnippet: trimForBudget(extractPromptSnippet(req.Body), opts.MaxPromptChars),
-			RequestBody:   trimForBudget(string(req.Body), opts.MaxPromptChars),
-			ResponseBody:  trimForBudget(respBody, opts.MaxPromptChars/2),
+		PromptSnippet: trimForBudget(extractPromptSnippet(req.Body), opts.MaxSnippetChars),
+		RequestBody:   trimForBudget(string(req.Body), opts.MaxSnippetChars),
+		ResponseBody:  trimForBudget(respBody, opts.MaxSnippetChars/2),
 		}
 		candidates = append(candidates, candidate)
 	}
@@ -172,31 +222,61 @@ func findPromptCandidates(store *EventStore, tree *ProcessTree, host string, sin
 	return candidates
 }
 
-func matchLLMProvider(url string) string {
-	urlLower := strings.ToLower(url)
-	for _, p := range llmAPIPatterns {
-		if strings.Contains(urlLower, p.pattern) {
-			return p.provider
-		}
+// urlHost extracts the hostname from a raw URL string, returning empty string
+// on parse failure. Port is excluded from the result.
+func urlHost(rawURL string) string {
+	if u, err := url.Parse(rawURL); err == nil {
+		return u.Hostname()
 	}
 	return ""
 }
 
-func findClosestResponse(reqTime time.Time, responses []export.RecordResponse) *export.RecordResponse {
-	var best *export.RecordResponse
-	bestDelta := time.Duration(0)
-	for i := range responses {
-		resp := &responses[i]
-		if resp.Timestamp.Before(reqTime) {
-			continue
-		}
-		delta := resp.Timestamp.Sub(reqTime)
-		if best == nil || delta < bestDelta {
-			best = resp
-			bestDelta = delta
+// isLLMRequestBody reports whether body looks like an LLM API request payload
+// by checking for characteristic JSON field names, regardless of URL path.
+// This handles proxied calls (e.g. litellm) where the path is arbitrary.
+func isLLMRequestBody(body []byte) bool {
+	if len(body) == 0 {
+		return false
+	}
+	s := string(body)
+	if !strings.Contains(s, `"model"`) {
+		return false
+	}
+	// Require at least one prompt-bearing field alongside "model".
+	return strings.Contains(s, `"messages"`) ||
+		strings.Contains(s, `"prompt"`) ||
+		strings.Contains(s, `"contents"`) ||
+		strings.Contains(s, `"input"`)
+}
+
+// matchLLMProvider returns the inferred provider name if the request looks like
+// an LLM API call, or empty string otherwise.
+//
+// Detection uses two independent signals, either of which is sufficient:
+//   - Host matches a known LLM provider (llmHostProviders)
+//   - Request body contains characteristic LLM fields ("model" + prompt fields)
+//
+// Body-based detection handles proxied or self-hosted setups (e.g. litellm,
+// ollama, vllm) where the URL path is arbitrary and cannot be relied upon.
+// Provider attribution uses the host map, falling back to the raw host string.
+func matchLLMProvider(host string, body []byte) string {
+	hostLower := strings.ToLower(host)
+
+	// Known provider by host — fastest path and most reliable.
+	for _, h := range llmHostProviders {
+		if strings.Contains(hostLower, h.host) {
+			return h.provider
 		}
 	}
-	return best
+
+	// Unknown host: fall back to body-shape detection.
+	if !isLLMRequestBody(body) {
+		return ""
+	}
+	if host != "" {
+		return host
+	}
+	return "unknown"
 }
 
 func extractPromptSnippet(body []byte) string {

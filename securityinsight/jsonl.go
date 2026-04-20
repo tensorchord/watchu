@@ -2,8 +2,11 @@ package securityinsight
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -73,82 +76,94 @@ func loadFile(path string, store *EventStore) (int, error) {
 	}
 	defer f.Close()
 
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 0, 1024*1024), 16*1024*1024)
+	// bufio.Reader.ReadBytes has no hard line-length cap: it grows its internal
+	// slice until the delimiter is found, unlike bufio.Scanner which rejects any
+	// line exceeding its configured max. This means records with arbitrarily
+	// large embedded payloads (e.g. multi-MB LLM response bodies) are read
+	// correctly. The initial buffer size is advisory only.
+	//
+	// We avoid json.Decoder here because on a JSON syntax error it does not
+	// advance past the bad token, causing an infinite loop when called again.
+	reader := bufio.NewReaderSize(f, 256*1024)
 	malformed := 0
 
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		if len(line) == 0 {
-			continue
+	for {
+		rawLine, readErr := reader.ReadBytes('\n')
+		// Trim newline before parsing; handle last line with no trailing newline.
+		line := bytes.TrimRight(rawLine, "\r\n")
+		if len(line) > 0 {
+			var env jsonlEnvelope
+			if err := json.Unmarshal(line, &env); err != nil {
+				malformed++
+			} else {
+				switch env.Endpoint {
+				case endpointExec:
+					var rec export.RecordExec
+					if json.Unmarshal(env.Event, &rec) == nil {
+						store.ExecEvents = append(store.ExecEvents, rec)
+					} else {
+						malformed++
+					}
+				case endpointRequest:
+					var rec export.RecordRequest
+					if json.Unmarshal(env.Event, &rec) == nil {
+						store.Requests = append(store.Requests, rec)
+					} else {
+						malformed++
+					}
+				case endpointResponse:
+					var rec export.RecordResponse
+					if json.Unmarshal(env.Event, &rec) == nil {
+						store.Responses = append(store.Responses, rec)
+					} else {
+						malformed++
+					}
+				case endpointStdIO:
+					var rec export.RecordStdIO
+					if json.Unmarshal(env.Event, &rec) == nil {
+						store.StdIO = append(store.StdIO, rec)
+					} else {
+						malformed++
+					}
+				case endpointPostgres:
+					var rec export.RecordPostgres
+					if json.Unmarshal(env.Event, &rec) == nil {
+						store.Postgres = append(store.Postgres, rec)
+					} else {
+						malformed++
+					}
+				case endpointFileOp:
+					var rec export.RecordFileOp
+					if json.Unmarshal(env.Event, &rec) == nil {
+						store.FileOps = append(store.FileOps, rec)
+					} else {
+						malformed++
+					}
+				case endpointTCPConnect:
+					var rec export.RecordTCPConnect
+					if json.Unmarshal(env.Event, &rec) == nil {
+						store.TCPConns = append(store.TCPConns, rec)
+					} else {
+						malformed++
+					}
+				case endpointAgentEvent:
+					var rec export.RecordAgentEvent
+					if json.Unmarshal(env.Event, &rec) == nil {
+						store.AgentEvts = append(store.AgentEvts, rec)
+					} else {
+						malformed++
+					}
+				default:
+					// unknown endpoint, skip
+				}
+			}
 		}
-
-		var env jsonlEnvelope
-		if err := json.Unmarshal(line, &env); err != nil {
-			malformed++
-			continue
-		}
-
-		switch env.Endpoint {
-		case endpointExec:
-			var rec export.RecordExec
-			if json.Unmarshal(env.Event, &rec) == nil {
-				store.ExecEvents = append(store.ExecEvents, rec)
-			} else {
-				malformed++
+		if readErr != nil {
+			if errors.Is(readErr, io.EOF) {
+				break
 			}
-		case endpointRequest:
-			var rec export.RecordRequest
-			if json.Unmarshal(env.Event, &rec) == nil {
-				store.Requests = append(store.Requests, rec)
-			} else {
-				malformed++
-			}
-		case endpointResponse:
-			var rec export.RecordResponse
-			if json.Unmarshal(env.Event, &rec) == nil {
-				store.Responses = append(store.Responses, rec)
-			} else {
-				malformed++
-			}
-		case endpointStdIO:
-			var rec export.RecordStdIO
-			if json.Unmarshal(env.Event, &rec) == nil {
-				store.StdIO = append(store.StdIO, rec)
-			} else {
-				malformed++
-			}
-		case endpointPostgres:
-			var rec export.RecordPostgres
-			if json.Unmarshal(env.Event, &rec) == nil {
-				store.Postgres = append(store.Postgres, rec)
-			} else {
-				malformed++
-			}
-		case endpointFileOp:
-			var rec export.RecordFileOp
-			if json.Unmarshal(env.Event, &rec) == nil {
-				store.FileOps = append(store.FileOps, rec)
-			} else {
-				malformed++
-			}
-		case endpointTCPConnect:
-			var rec export.RecordTCPConnect
-			if json.Unmarshal(env.Event, &rec) == nil {
-				store.TCPConns = append(store.TCPConns, rec)
-			} else {
-				malformed++
-			}
-		case endpointAgentEvent:
-			var rec export.RecordAgentEvent
-			if json.Unmarshal(env.Event, &rec) == nil {
-				store.AgentEvts = append(store.AgentEvts, rec)
-			} else {
-				malformed++
-			}
-		default:
-			// unknown endpoint, skip
+			return malformed, readErr
 		}
 	}
-	return malformed, scanner.Err()
+	return malformed, nil
 }

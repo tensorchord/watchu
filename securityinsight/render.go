@@ -8,6 +8,7 @@ import (
 )
 
 // RenderThreatEvidencePrompt renders a ThreatEvidencePackage as human-readable text.
+// Kept for backward compatibility but the new workflow uses RenderScanPrompt/RenderDetailPrompt.
 func RenderThreatEvidencePrompt(pkg *ThreatEvidencePackage) string {
 	var b strings.Builder
 	b.WriteString("SECURITYINSIGHT EVIDENCE PACKAGE\n\n")
@@ -25,13 +26,15 @@ func RenderThreatEvidencePrompt(pkg *ThreatEvidencePackage) string {
 	b.WriteString("\n\nTelemetry summary:\n")
 	renderMap(&b, pkg.TelemetrySummary)
 
-	if len(pkg.SecurityEvents) > 0 {
-		b.WriteString("\nTop security events:\n")
-		renderEvidenceItems(&b, pkg.SecurityEvents)
-	}
-	if len(pkg.HeuristicAlerts) > 0 {
-		b.WriteString("\nHeuristic alerts:\n")
-		renderEvidenceItems(&b, pkg.HeuristicAlerts)
+	if len(pkg.EventSamples) > 0 {
+		b.WriteString("\nEvent samples:\n")
+		for i, s := range pkg.EventSamples {
+			fmt.Fprintf(&b, "%d. [%s] %s", i+1, s.Category, s.Summary)
+			if s.Comm != "" {
+				fmt.Fprintf(&b, " (comm=%s pid=%d)", s.Comm, s.Pid)
+			}
+			fmt.Fprintf(&b, " @ %s\n", s.Timestamp)
+		}
 	}
 	if len(pkg.RunnerExcerpts) > 0 {
 		b.WriteString("\nRunner output excerpts:\n")
@@ -131,68 +134,155 @@ func renderMap(b *strings.Builder, m map[string]any) {
 	}
 }
 
-func renderEvidenceItems(b *strings.Builder, items []EvidenceItem) {
-	for i, item := range items {
-		fmt.Fprintf(b, "%d. [%s] %s", i+1, item.Severity, item.Title)
-		if item.FilePath != "" {
-			fmt.Fprintf(b, " (%s)", item.FilePath)
-		}
-		b.WriteString("\n")
-		if item.Description != "" {
-			fmt.Fprintf(b, "   description: %s\n", item.Description)
-		}
-		if item.Snippet != "" {
-			fmt.Fprintf(b, "   snippet: %s\n", item.Snippet)
-		}
-	}
-}
-
-func sortEvidenceItems(items []EvidenceItem) {
-	slices.SortStableFunc(items, func(a, b EvidenceItem) int {
-		if severityRank(a.Severity) != severityRank(b.Severity) {
-			return severityRank(a.Severity) - severityRank(b.Severity)
-		}
-		return strings.Compare(a.Title, b.Title)
-	})
-}
-
-func clampEvidenceItems(items []EvidenceItem, max int) []EvidenceItem {
-	if len(items) <= max {
-		return items
-	}
-	return items[:max]
-}
-
-func severityRank(severity string) int {
-	switch strings.ToLower(strings.TrimSpace(severity)) {
-	case "critical":
-		return 0
-	case "high":
-		return 1
-	case "medium":
-		return 2
-	case "low":
-		return 3
-	case "info":
-		return 4
-	case "none":
-		return 5
-	default:
-		return 6
-	}
-}
-
 func trimForBudget(input string, maxChars int) string {
 	cleaned := strings.TrimSpace(input)
 	if cleaned == "" {
 		return ""
 	}
 	cleaned = strings.Join(strings.Fields(cleaned), " ")
-	if len(cleaned) <= maxChars {
+	runes := []rune(cleaned)
+	if len(runes) <= maxChars {
 		return cleaned
 	}
 	if maxChars <= 3 {
-		return cleaned[:maxChars]
+		return string(runes[:maxChars])
 	}
-	return cleaned[:maxChars-3] + "..."
+	return string(runes[:maxChars-3]) + "..."
+}
+
+// RenderScanPrompt renders a ScanPackage as agent-readable text.
+func RenderScanPrompt(pkg *ScanPackage) string {
+	var b strings.Builder
+	b.WriteString("SECURITYINSIGHT SCAN OVERVIEW\n\n")
+	fmt.Fprintf(&b, "Analysis type: %s\n", pkg.AnalysisType)
+	b.WriteString("Root exec ID: ")
+	b.WriteString(pkg.RootExecID)
+	b.WriteString("\n")
+	if len(pkg.Selection) > 0 {
+		b.WriteString("Selection:\n")
+		renderMap(&b, pkg.Selection)
+		b.WriteString("\n")
+	}
+	b.WriteString("Goal: ")
+	b.WriteString(pkg.Goal)
+	b.WriteString("\n\nTelemetry summary:\n")
+	renderMap(&b, pkg.TelemetrySummary)
+
+	if len(pkg.EventOverview) > 0 {
+		b.WriteString("\nEvent overview:\n")
+		// Stable ordering of categories.
+		catOrder := []string{"exec", "file_read", "file_write", "tcp_connect", "http_request", "http_response", "mcp_stdio"}
+		for _, cat := range catOrder {
+			ov, ok := pkg.EventOverview[cat]
+			if !ok {
+				continue
+			}
+			fmt.Fprintf(&b, "  %s: %d events\n", cat, ov.Count)
+			for _, item := range ov.TopItems {
+				fmt.Fprintf(&b, "    - %s\n", item)
+			}
+		}
+	}
+
+	if len(pkg.ProcessTree) > 0 {
+		b.WriteString("\nProcess tree:\n")
+		for _, root := range pkg.ProcessTree {
+			renderTreeNode(&b, root, 1)
+		}
+	}
+
+	if len(pkg.RedFlags) > 0 {
+		fmt.Fprintf(&b, "\nRed flags (%d):\n", len(pkg.RedFlags))
+		for i, rf := range pkg.RedFlags {
+			fmt.Fprintf(&b, "  %d. [%s] %s — comm=%s pid=%d @ %s\n",
+				i+1, rf.Severity, rf.PatternID, rf.Comm, rf.Pid, rf.Timestamp)
+			fmt.Fprintf(&b, "     evidence: %s\n", rf.Evidence)
+			fmt.Fprintf(&b, "     reason: %s\n", rf.Reason)
+		}
+	}
+
+	if len(pkg.SuspiciousSequences) > 0 {
+		fmt.Fprintf(&b, "\nSuspicious sequences (%d):\n", len(pkg.SuspiciousSequences))
+		for i, seq := range pkg.SuspiciousSequences {
+			fmt.Fprintf(&b, "  %d. [%s] %s +%dms\n", i+1, seq.Severity, seq.PatternID, seq.DeltaMs)
+			fmt.Fprintf(&b, "     trigger:  [%s] %s (comm=%s pid=%d) @ %s\n",
+				seq.Trigger.Category, seq.Trigger.Summary, seq.Trigger.Comm, seq.Trigger.Pid, seq.Trigger.Timestamp)
+			fmt.Fprintf(&b, "     follower: [%s] %s (comm=%s pid=%d) @ %s\n",
+				seq.Follower.Category, seq.Follower.Summary, seq.Follower.Comm, seq.Follower.Pid, seq.Follower.Timestamp)
+			fmt.Fprintf(&b, "     reason: %s\n", seq.Reason)
+		}
+	}
+
+	if len(pkg.RunnerExcerpts) > 0 {
+		b.WriteString("\nRunner output excerpts:\n")
+		for i, excerpt := range pkg.RunnerExcerpts {
+			fmt.Fprintf(&b, "%d. [%s] %s\n", i+1, excerpt.Reason, excerpt.Content)
+		}
+	}
+
+	if len(pkg.Notes) > 0 {
+		b.WriteString("\nNotes:\n")
+		for _, note := range pkg.Notes {
+			b.WriteString("- ")
+			b.WriteString(note)
+			b.WriteString("\n")
+		}
+	}
+
+	return strings.TrimSpace(b.String())
+}
+
+func renderTreeNode(b *strings.Builder, node ProcessTreeNode, depth int) {
+	indent := strings.Repeat("  ", depth)
+	label := node.Comm
+	if node.AgentProvider != "" {
+		label += fmt.Sprintf(" [%s]", node.AgentProvider)
+	}
+	if node.ChildCount > 0 {
+		label += fmt.Sprintf(" → %d children", node.ChildCount)
+	}
+	fmt.Fprintf(b, "%s%s (pid=%d)\n", indent, label, node.Pid)
+	if node.Args != "" {
+		args := node.Args
+		const maxArgLen = 120
+		if len(args) > maxArgLen {
+			args = args[:maxArgLen] + "..."
+		}
+		fmt.Fprintf(b, "%s  args: %s\n", indent, args)
+	}
+	for _, child := range node.Children {
+		renderTreeNode(b, child, depth+1)
+	}
+}
+
+// RenderDetailPrompt renders a DetailPackage as agent-readable text.
+func RenderDetailPrompt(pkg *DetailPackage) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "SECURITYINSIGHT DETAIL: %s\n\n", strings.ToUpper(pkg.Focus))
+	b.WriteString("Root exec ID: ")
+	b.WriteString(pkg.RootExecID)
+	b.WriteString("\n")
+	if pkg.Filter != "" {
+		fmt.Fprintf(&b, "Filter: %s\n", pkg.Filter)
+	}
+	fmt.Fprintf(&b, "Events: %d shown / %d total\n\n", pkg.ShownEvents, pkg.TotalEvents)
+
+	for i, ev := range pkg.Events {
+		fmt.Fprintf(&b, "%d. [%s] %s", i+1, ev.Category, ev.Summary)
+		if ev.Comm != "" {
+			fmt.Fprintf(&b, " (comm=%s pid=%d)", ev.Comm, ev.Pid)
+		}
+		fmt.Fprintf(&b, " @ %s\n", ev.Timestamp)
+	}
+
+	if len(pkg.Notes) > 0 {
+		b.WriteString("\nNotes:\n")
+		for _, note := range pkg.Notes {
+			b.WriteString("- ")
+			b.WriteString(note)
+			b.WriteString("\n")
+		}
+	}
+
+	return strings.TrimSpace(b.String())
 }

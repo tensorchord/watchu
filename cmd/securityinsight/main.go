@@ -36,16 +36,15 @@ Usage:
 
 Commands:
   collect prompt    Collect bounded prompt-injection evidence from JSONL files
-  collect threat    Collect bounded threat evidence for one root execution
+  collect threat    Collect telemetry evidence for agent run analysis
 
 Common Options:
   --input string                 JSONL file path or glob pattern (required)
   --format string                Output format: prompt or json (default: prompt)
-  --max-events int               Max security events in threat output (default: 50)
-  --max-findings-per-kind int    Max static or dynamic findings per kind (default: 20)
-  --max-runner-chars int         Max runner output chars in threat output (default: 12000)
-  --max-prompt-chars int         Max prompt or HTTP snippet chars per candidate (default: 4000)
-  --max-candidates int           Max prompt candidates (default: 25)
+  --max-events int               Max events in output (default: 50)
+  --max-agent-output int         Max total chars for agent output excerpts (default: 12000)
+  --max-snippet-chars int        Max chars per field in each LLM call record (default: 4000)
+  --max-llm-calls int            Max LLM API call pairs in output (default: 25)
 
 Prompt Collection:
   --root-exec-id string          Collect prompt evidence for an explicit root execution ID
@@ -53,11 +52,19 @@ Prompt Collection:
   --since string                 Start time in RFC3339 format (required unless --root-exec-id)
   --until string                 End time in RFC3339 format (required unless --root-exec-id)
 
-Threat Collection:
-  --root-exec-id string          Collect threat evidence for an explicit root execution ID
+Threat Collection (two-phase):
+  --mode string                  Collection mode: scan or detail (default: scan)
+  --root-exec-id string          Target root execution ID
   --latest                       Resolve the most recent root execution automatically
-  --since string                 Start time in RFC3339 format (required unless --root-exec-id or --latest)
-  --until string                 End time in RFC3339 format (required unless --root-exec-id or --latest)
+  --since string                 Start time in RFC3339 format
+  --until string                 End time in RFC3339 format
+
+  Scan mode options:
+    (no additional options — produces a compact overview)
+
+  Detail mode options:
+    --focus string               Category to deep-dive: exec, file_read, file_write, network, http, mcp, all
+    --filter string              Pipe-separated patterns to match (e.g. "curl|wget|chmod")
 `)
 }
 
@@ -79,15 +86,34 @@ func runCollect(args []string) {
 	}
 }
 
-func baseCollectOptions(fs *flag.FlagSet) (*string, *string, *int, *int, *int, *int, *int) {
-	input := fs.String("input", "", "JSONL file path or glob pattern (required)")
-	format := fs.String("format", "prompt", "Output format: prompt or json")
-	maxEvents := fs.Int("max-events", 50, "Max security events in threat output")
-	maxFindingsPerKind := fs.Int("max-findings-per-kind", 20, "Max findings per kind")
-	maxRunnerChars := fs.Int("max-runner-chars", 12000, "Max runner output chars")
-	maxPromptChars := fs.Int("max-prompt-chars", 4000, "Max prompt or HTTP snippet chars")
-	maxCandidates := fs.Int("max-candidates", 25, "Max prompt candidates")
-	return input, format, maxEvents, maxFindingsPerKind, maxRunnerChars, maxPromptChars, maxCandidates
+// baseFlags bundles the flag pointers shared between collect sub-commands.
+type baseFlags struct {
+	input           *string
+	format          *string
+	maxEvents       *int
+	maxAgentOutput  *int
+	maxSnippetChars *int
+	maxLLMCalls     *int
+}
+
+func registerBaseFlags(fs *flag.FlagSet) baseFlags {
+	return baseFlags{
+		input:          fs.String("input", "", "JSONL file path or glob pattern (required)"),
+		format:         fs.String("format", "prompt", "Output format: prompt or json"),
+		maxEvents:      fs.Int("max-events", 50, "Max events in output"),
+		maxAgentOutput:  fs.Int("max-agent-output", 12000, "Max total chars for agent output excerpts"),
+		maxSnippetChars: fs.Int("max-snippet-chars", 4000, "Max chars per field in each LLM call record"),
+		maxLLMCalls:     fs.Int("max-llm-calls", 25, "Max LLM API call pairs in output"),
+	}
+}
+
+func (bf baseFlags) collectOptions() securityinsight.CollectOptions {
+	return securityinsight.CollectOptions{
+		MaxEvents:       *bf.maxEvents,
+		MaxAgentOutput:  *bf.maxAgentOutput,
+		MaxSnippetChars: *bf.maxSnippetChars,
+		MaxLLMCalls:     *bf.maxLLMCalls,
+	}
 }
 
 func loadStore(input string) (*securityinsight.EventStore, *securityinsight.ProcessTree) {
@@ -107,7 +133,7 @@ func loadStore(input string) (*securityinsight.EventStore, *securityinsight.Proc
 
 func runCollectPrompt(args []string) {
 	fs := flag.NewFlagSet("collect prompt", flag.ExitOnError)
-	input, format, maxEvents, maxFindingsPerKind, maxRunnerChars, maxPromptChars, maxCandidates := baseCollectOptions(fs)
+	bf := registerBaseFlags(fs)
 	rootExecIDRaw := fs.String("root-exec-id", "", "Collect prompt evidence for an explicit root execution ID")
 	host := fs.String("host", "", "Host to analyze")
 	sinceRaw := fs.String("since", "", "Start time in RFC3339 format")
@@ -116,15 +142,8 @@ func runCollectPrompt(args []string) {
 		exitf("Error parsing flags: %v", err)
 	}
 
-	store, tree := loadStore(*input)
-
-	opts := securityinsight.CollectOptions{
-		MaxEvents:          *maxEvents,
-		MaxFindingsPerKind: *maxFindingsPerKind,
-		MaxRunnerChars:     *maxRunnerChars,
-		MaxPromptChars:     *maxPromptChars,
-		MaxCandidates:      *maxCandidates,
-	}
+	store, tree := loadStore(*bf.input)
+	opts := bf.collectOptions()
 
 	rootExecID := strings.TrimSpace(*rootExecIDRaw)
 	if rootExecID != "" {
@@ -135,7 +154,7 @@ func runCollectPrompt(args []string) {
 		if err != nil {
 			exitf("Error collecting prompt evidence: %v", err)
 		}
-		writeOutput(*format, pkg, securityinsight.RenderPromptEvidencePrompt(pkg))
+		writeOutput(*bf.format, pkg, securityinsight.RenderPromptEvidencePrompt(pkg))
 		return
 	}
 
@@ -152,13 +171,16 @@ func runCollectPrompt(args []string) {
 	if err != nil {
 		exitf("Error collecting prompt evidence: %v", err)
 	}
-	writeOutput(*format, pkg, securityinsight.RenderPromptEvidencePrompt(pkg))
+	writeOutput(*bf.format, pkg, securityinsight.RenderPromptEvidencePrompt(pkg))
 }
 
 func runCollectThreat(args []string) {
 	fs := flag.NewFlagSet("collect threat", flag.ExitOnError)
-	input, format, maxEvents, maxFindingsPerKind, maxRunnerChars, maxPromptChars, maxCandidates := baseCollectOptions(fs)
-	rootExecIDRaw := fs.String("root-exec-id", "", "Collect threat evidence for an explicit root execution ID")
+	bf := registerBaseFlags(fs)
+	mode := fs.String("mode", "scan", "Collection mode: scan or detail")
+	focus := fs.String("focus", "", "Detail mode: category to deep-dive (exec, file_read, file_write, network, http, mcp, all)")
+	filter := fs.String("filter", "", "Detail mode: pipe-separated patterns to match")
+	rootExecIDRaw := fs.String("root-exec-id", "", "Target root execution ID")
 	latest := fs.Bool("latest", false, "Resolve the most recent root execution automatically")
 	sinceRaw := fs.String("since", "", "Start time in RFC3339 format")
 	untilRaw := fs.String("until", "", "End time in RFC3339 format")
@@ -166,47 +188,105 @@ func runCollectThreat(args []string) {
 		exitf("Error parsing flags: %v", err)
 	}
 
-	store, tree := loadStore(*input)
-
-	opts := securityinsight.CollectOptions{
-		MaxEvents:          *maxEvents,
-		MaxFindingsPerKind: *maxFindingsPerKind,
-		MaxRunnerChars:     *maxRunnerChars,
-		MaxPromptChars:     *maxPromptChars,
-		MaxCandidates:      *maxCandidates,
+	collectMode := securityinsight.CollectMode(strings.TrimSpace(*mode))
+	switch collectMode {
+	case securityinsight.CollectModeScan, securityinsight.CollectModeDetail:
+	default:
+		exitf("Error: --mode must be 'scan' or 'detail', got %q", *mode)
 	}
 
-	rootExecID := strings.TrimSpace(*rootExecIDRaw)
-	var selection map[string]any
+	if collectMode == securityinsight.CollectModeDetail && strings.TrimSpace(*focus) == "" {
+		exitf("Error: --focus is required when --mode=detail")
+	}
 
+	store, tree := loadStore(*bf.input)
+	opts := bf.collectOptions()
+
+	rootExecID := strings.TrimSpace(*rootExecIDRaw)
+
+	switch collectMode {
+	case securityinsight.CollectModeScan:
+		runScanMode(store, tree, opts, *bf.format, rootExecID, *latest, *sinceRaw, *untilRaw)
+	case securityinsight.CollectModeDetail:
+		runDetailMode(store, tree, opts, *bf.format, rootExecID, *latest, *sinceRaw, *untilRaw,
+			securityinsight.DetailFocus(strings.TrimSpace(*focus)), strings.TrimSpace(*filter))
+	}
+}
+
+func runScanMode(
+	store *securityinsight.EventStore,
+	tree *securityinsight.ProcessTree,
+	opts securityinsight.CollectOptions,
+	format string,
+	rootExecID string,
+	latest bool,
+	sinceRaw, untilRaw string,
+) {
 	if rootExecID != "" {
-		if *latest || strings.TrimSpace(*sinceRaw) != "" || strings.TrimSpace(*untilRaw) != "" {
-			exitf("Error: --root-exec-id is mutually exclusive with --latest, --since, and --until")
+		pkg, err := securityinsight.CollectScan(store, tree, rootExecID, opts)
+		if err != nil {
+			exitf("Error collecting scan: %v", err)
 		}
-		selection = map[string]any{
-			"requested_mode": "explicit_root_exec_id",
-			"selection_mode": "explicit_root_exec_id",
-			"root_exec_id":   rootExecID,
-		}
-	} else {
-		selector, err := resolveThreatSelector(*latest, *sinceRaw, *untilRaw)
+		writeOutput(format, pkg, securityinsight.RenderScanPrompt(pkg))
+		return
+	}
+
+	selector, err := resolveThreatSelector(latest, sinceRaw, untilRaw)
+	if err != nil {
+		exitf("Error: %v", err)
+	}
+
+	agentRuns, err := securityinsight.ResolveAllThreatAgentRuns(store, tree, selector)
+	if err != nil {
+		exitf("Error resolving agent runs: %v", err)
+	}
+
+	if len(agentRuns) > 1 {
+		writeMultiScanOutput(format, store, tree, opts, agentRuns, selector)
+		return
+	}
+
+	resolvedID, _, err := securityinsight.ResolveThreatRootExecID(store, tree, selector)
+	if err != nil {
+		exitf("Error resolving root exec ID: %v", err)
+	}
+
+	pkg, err := securityinsight.CollectScan(store, tree, resolvedID, opts)
+	if err != nil {
+		exitf("Error collecting scan: %v", err)
+	}
+	writeOutput(format, pkg, securityinsight.RenderScanPrompt(pkg))
+}
+
+func runDetailMode(
+	store *securityinsight.EventStore,
+	tree *securityinsight.ProcessTree,
+	opts securityinsight.CollectOptions,
+	format string,
+	rootExecID string,
+	latest bool,
+	sinceRaw, untilRaw string,
+	focus securityinsight.DetailFocus,
+	filter string,
+) {
+	if rootExecID == "" {
+		// Resolve a single root exec ID for detail mode.
+		selector, err := resolveThreatSelector(latest, sinceRaw, untilRaw)
 		if err != nil {
 			exitf("Error: %v", err)
 		}
-		var resolvedID string
-		resolvedID, selection, err = securityinsight.ResolveThreatRootExecID(store, tree, selector)
+		resolvedID, _, err := securityinsight.ResolveThreatRootExecID(store, tree, selector)
 		if err != nil {
-			exitf("Error resolving threat target: %v", err)
+			exitf("Error resolving root exec ID: %v", err)
 		}
 		rootExecID = resolvedID
 	}
 
-	pkg, err := securityinsight.CollectThreatEvidence(store, tree, rootExecID, opts)
+	pkg, err := securityinsight.CollectDetail(store, tree, rootExecID, focus, filter, opts)
 	if err != nil {
-		exitf("Error collecting threat evidence: %v", err)
+		exitf("Error collecting detail: %v", err)
 	}
-	pkg.Selection = selection
-	writeOutput(*format, pkg, securityinsight.RenderThreatEvidencePrompt(pkg))
+	writeOutput(format, pkg, securityinsight.RenderDetailPrompt(pkg))
 }
 
 func resolveThreatSelector(latest bool, sinceRaw, untilRaw string) (securityinsight.ThreatSelector, error) {
@@ -242,6 +322,58 @@ func writeOutput(format string, payload any, prompt string) {
 		fmt.Println(string(out))
 	case securityinsight.OutputFormatPrompt, "":
 		fmt.Println(prompt)
+	default:
+		exitf("Unsupported --format value %q", format)
+	}
+}
+
+// writeMultiScanOutput collects and outputs a ScanPackage per agent run.
+// For prompt format, packages are separated by a visual divider.
+// For JSON format, an array of packages is emitted.
+func writeMultiScanOutput(
+	format string,
+	store *securityinsight.EventStore,
+	tree *securityinsight.ProcessTree,
+	opts securityinsight.CollectOptions,
+	runs []securityinsight.AgentRunInfo,
+	selector securityinsight.ThreatSelector,
+) {
+	packages := make([]*securityinsight.ScanPackage, 0, len(runs))
+	for i, run := range runs {
+		pkg, err := securityinsight.CollectScan(store, tree, run.RootExecID, opts)
+		if err != nil {
+			exitf("Error collecting scan for run %d (%s): %v", i+1, run.RootExecID, err)
+		}
+		pkg.Selection = map[string]any{
+			"run_index":       i + 1,
+			"total_agent_runs": len(runs),
+			"agent_provider":  run.AgentProvider,
+			"host":            run.Host,
+			"event_count":     run.EventCount,
+		}
+		if !selector.Since.IsZero() {
+			pkg.Selection["since"] = selector.Since.Format(time.RFC3339)
+		}
+		if !selector.Until.IsZero() {
+			pkg.Selection["until"] = selector.Until.Format(time.RFC3339)
+		}
+		packages = append(packages, pkg)
+	}
+
+	switch securityinsight.OutputFormat(strings.TrimSpace(format)) {
+	case securityinsight.OutputFormatJSON:
+		out, err := securityinsight.MarshalCollectedJSON(packages)
+		if err != nil {
+			exitf("Failed to marshal JSON output: %v", err)
+		}
+		fmt.Println(string(out))
+	case securityinsight.OutputFormatPrompt, "":
+		for i, pkg := range packages {
+			if i > 0 {
+				fmt.Println("\n" + strings.Repeat("=", 72) + "\n")
+			}
+			fmt.Println(securityinsight.RenderScanPrompt(pkg))
+		}
 	default:
 		exitf("Unsupported --format value %q", format)
 	}
