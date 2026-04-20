@@ -3,7 +3,6 @@ package securityinsight
 import (
 	"fmt"
 	"net/url"
-	"sort"
 	"strings"
 	"time"
 
@@ -121,36 +120,11 @@ func findPromptCandidates(store *EventStore, tree *ProcessTree, f promptFilter, 
 		pids = tree.DescendantPIDs(f.rootExecID)
 	}
 
-	// Build a sorted response index keyed by (pid, tid). Sorting by timestamp
-	// enables a consume-once cursor: each response is matched to at most one
-	// request, preventing a single response from being paired with multiple
-	// back-to-back requests on the same thread.
-	//
-	// Limitation: (pid, tid) is the finest granularity available in the current
-	// eBPF data model. Socket fd or a correlation ID would allow exact 1:1
-	// matching for HTTP/2 multiplexed streams, but those fields are not
-	// captured yet.
-	type respKey struct {
-		Pid int32
-		Tid int32
-	}
-	type respCursor struct {
-		resps []export.RecordResponse
-		next  int // index of the first unconsumed response
-	}
-	respIndex := make(map[respKey]*respCursor, len(store.Responses))
+	// Index responses by SessionKey for precise 1:1 req/resp correlation.
+	respIndex := make(map[string]export.RecordResponse, len(store.Responses))
 	for i := range store.Responses {
 		rec := &store.Responses[i]
-		key := respKey{rec.Pid, rec.Tid}
-		if respIndex[key] == nil {
-			respIndex[key] = &respCursor{}
-		}
-		respIndex[key].resps = append(respIndex[key].resps, *rec)
-	}
-	for _, cur := range respIndex {
-		sort.Slice(cur.resps, func(i, j int) bool {
-			return cur.resps[i].Timestamp.Before(cur.resps[j].Timestamp)
-		})
+		respIndex[rec.SessionKey] = *rec
 	}
 
 	candidates := make([]PromptCandidate, 0, 8)
@@ -192,19 +166,9 @@ func findPromptCandidates(store *EventStore, tree *ProcessTree, f promptFilter, 
 		// extract model from request body if possible
 		model := extractModelFromBody(req.Body)
 
-		// Consume the first response after req.Timestamp in the same pid+tid
-		// bucket. Advancing the cursor ensures each response is used at most once.
 		respBody := ""
-		key := respKey{req.Pid, req.Tid}
-		if cur, ok := respIndex[key]; ok {
-			// Skip responses that arrived before this request.
-			for cur.next < len(cur.resps) && !cur.resps[cur.next].Timestamp.After(req.Timestamp) {
-				cur.next++
-			}
-			if cur.next < len(cur.resps) {
-				respBody = string(cur.resps[cur.next].Body)
-				cur.next++
-			}
+		if resp, ok := respIndex[req.SessionKey]; ok {
+			respBody = string(resp.Body)
 		}
 
 		candidate := PromptCandidate{
