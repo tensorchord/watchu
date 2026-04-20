@@ -76,3 +76,6 @@ go.work.sum
 # binary
 bin/
 main
+
+# code agents
+.codex
