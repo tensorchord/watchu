@@ -70,7 +70,11 @@ type RecordExec struct {
 }
 
 type RecordRequest struct {
-	Timestamp     time.Time       `json:"timestamp"`
+	Timestamp time.Time `json:"timestamp"`
+	// SessionKey is a best-effort correlation key for an observed HTTP exchange.
+	// It is normally created on the request side, but may be created on the response
+	// side when the request was not successfully captured or emitted.
+	SessionKey    string          `json:"session_key"`
 	Pid           int32           `json:"pid"`
 	Tid           int32           `json:"tid"`
 	Uid           int32           `json:"uid"`
@@ -88,7 +92,10 @@ type RecordRequest struct {
 }
 
 type RecordResponse struct {
-	Timestamp     time.Time       `json:"timestamp"`
+	Timestamp time.Time `json:"timestamp"`
+	// SessionKey is a best-effort correlation key for an observed HTTP exchange.
+	// A response may carry a SessionKey even when the matching request event was not emitted.
+	SessionKey    string          `json:"session_key"`
 	Pid           int32           `json:"pid"`
 	Tid           int32           `json:"tid"`
 	Uid           int32           `json:"uid"`
@@ -233,6 +240,7 @@ func (raw *RawExec) ToRecord(_ context.Context, host string) any {
 
 type RawRequest struct {
 	ElapsedNs     uint64
+	SessionKey    string
 	PidTGid       uint64
 	UidGid        uint64
 	CgroupID      uint64
@@ -255,6 +263,7 @@ func (raw *RawRequest) ToRecord(ctx context.Context, host string) any {
 
 	return RecordRequest{
 		Timestamp:     parseElapsedToTimestamp(raw.ElapsedNs),
+		SessionKey:    raw.SessionKey,
 		Pid:           extractPid(raw.PidTGid),
 		Tid:           extractTid(raw.PidTGid),
 		Uid:           extractUid(raw.UidGid),
@@ -274,6 +283,7 @@ func (raw *RawRequest) ToRecord(ctx context.Context, host string) any {
 
 type RawResponse struct {
 	ElapsedNs     uint64
+	SessionKey    string
 	PidTGid       uint64
 	UidGid        uint64
 	CgroupID      uint64
@@ -294,6 +304,7 @@ func (raw *RawResponse) ToRecord(ctx context.Context, host string) any {
 	}
 	return RecordResponse{
 		Timestamp:     parseElapsedToTimestamp(raw.ElapsedNs),
+		SessionKey:    raw.SessionKey,
 		Pid:           extractPid(raw.PidTGid),
 		Tid:           extractTid(raw.PidTGid),
 		Uid:           extractUid(raw.UidGid),

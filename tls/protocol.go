@@ -14,6 +14,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/google/uuid"
 	"github.com/maypok86/otter/v2"
 	"github.com/phuslu/log"
 	"golang.org/x/net/http2"
@@ -116,32 +117,61 @@ type EventInfo struct {
 	Comm        [16]int8
 }
 
+type SessionScope struct {
+	Conn     SSLKey
+	StreamID uint32
+}
+
 type SSLRecord struct {
 	Info        []*EventInfo
 	Stream      []uint8
 	LastResp    *http.Response
 	EndOfStream bool
+	HTTP2       *HTTP2State
+	LastTouched time.Time
 }
 
 func (r *SSLRecord) Append(data []uint8, info *EventInfo) {
 	r.Stream = append(r.Stream, data...)
 	r.Info = append(r.Info, info)
+	r.LastTouched = time.Now()
 }
 
 type SSLStore struct {
-	Request        map[SSLKey]*SSLRecord
-	Response       map[SSLKey]*SSLRecord
-	protocolCache  *otter.Cache[SSLKey, ProtocolType]
-	reqMu          sync.Mutex
-	respMu         sync.Mutex
-	interval       time.Duration
-	http1Parser    *HTTP1Parser
-	http2Parser    *HTTP2Parser
-	postgresParser *PostgresParser
+	Request         map[SSLKey]*SSLRecord
+	Response        map[SSLKey]*SSLRecord
+	sessions        *otter.Cache[SessionScope, string]
+	sessionScopes   map[SSLKey]map[SessionScope]struct{}
+	protocolCache   *otter.Cache[SSLKey, ProtocolType]
+	reqMu           sync.Mutex
+	respMu          sync.Mutex
+	sessionMu       sync.Mutex
+	cleanupMu       sync.Mutex
+	sessionTTL      time.Duration
+	recordTTL       time.Duration
+	cleanupInterval time.Duration
+	nextCleanup     time.Time
+	parseInterval   time.Duration
+	http1Parser     *HTTP1Parser
+	http2Parser     *HTTP2Parser
+	postgresParser  *PostgresParser
 }
 
 func NewSSLStore() *SSLStore {
-	cache := otter.Must(&otter.Options[SSLKey, ProtocolType]{
+	store := &SSLStore{
+		parseInterval:   time.Second,
+		Request:         make(map[SSLKey]*SSLRecord),
+		Response:        make(map[SSLKey]*SSLRecord),
+		sessionScopes:   make(map[SSLKey]map[SessionScope]struct{}),
+		sessionTTL:      10 * time.Minute,
+		recordTTL:       10 * time.Minute,
+		cleanupInterval: time.Minute,
+		nextCleanup:     time.Now().Add(time.Minute),
+		http1Parser:     &HTTP1Parser{},
+		http2Parser:     &HTTP2Parser{},
+		postgresParser:  &PostgresParser{},
+	}
+	store.protocolCache = otter.Must(&otter.Options[SSLKey, ProtocolType]{
 		ExpiryCalculator: otter.ExpiryAccessingFunc(func(entry otter.Entry[SSLKey, ProtocolType]) time.Duration {
 			if entry.Value == ProtocolPostgres {
 				return 3 * time.Hour
@@ -149,14 +179,167 @@ func NewSSLStore() *SSLStore {
 			return 10 * time.Minute
 		}),
 	})
-	return &SSLStore{
-		interval:       time.Second,
-		Request:        make(map[SSLKey]*SSLRecord),
-		Response:       make(map[SSLKey]*SSLRecord),
-		protocolCache:  cache,
-		http1Parser:    &HTTP1Parser{},
-		http2Parser:    NewHTTP2Parser(),
-		postgresParser: &PostgresParser{},
+	store.sessions = otter.Must(&otter.Options[SessionScope, string]{
+		ExpiryCalculator: otter.ExpiryAccessingFunc(func(entry otter.Entry[SessionScope, string]) time.Duration {
+			return store.sessionTTL
+		}),
+	})
+	return store
+}
+
+func generateSessionKey() string {
+	sessionKey, err := uuid.NewV7()
+	if err != nil {
+		return fmt.Sprintf("unknown-session-%d", time.Now().UnixNano())
+	}
+	return sessionKey.String()
+}
+
+func (s *SSLStore) ensureSessionKey(scope SessionScope) string {
+	if sessionKey, ok := s.sessions.GetIfPresent(scope); ok {
+		return sessionKey
+	}
+	sessionKey := generateSessionKey()
+	s.sessions.Set(scope, sessionKey)
+	s.addSessionScope(scope)
+	return sessionKey
+}
+
+func (s *SSLStore) deleteSessionKey(scope SessionScope) {
+	s.sessions.Invalidate(scope)
+	s.removeSessionScope(scope)
+}
+
+func (s *SSLStore) deleteConnectionSessions(key SSLKey) {
+	for scope := range s.sessionScopesForConn(key) {
+		s.deleteSessionKey(scope)
+	}
+}
+
+func sessionScopeForKey(key SSLKey, streamID uint32) SessionScope {
+	return SessionScope{
+		Conn:     key,
+		StreamID: streamID,
+	}
+}
+
+func consumeRecord(record *SSLRecord, consumed int) (timestamp uint64, comm string, consumedAll bool) {
+	if consumed <= 0 || len(record.Info) == 0 {
+		return 0, "", consumed == len(record.Stream)
+	}
+	if consumed > len(record.Stream) {
+		consumed = len(record.Stream)
+	}
+	if consumed == len(record.Stream) {
+		last := record.Info[len(record.Info)-1]
+		record.Stream = record.Stream[:0]
+		record.Info = record.Info[:0]
+		return last.TimestampNs, tool.CharsToString(last.Comm[:]), true
+	}
+
+	record.Stream = record.Stream[consumed:]
+	index := 0
+	last := 0
+	length := consumed
+	for i, info := range record.Info {
+		index = i
+		if length == 0 {
+			break
+		} else if length >= int(info.DataLen) {
+			length -= int(info.DataLen)
+		} else {
+			break
+		}
+		last = i
+		if i == len(record.Info)-1 && length == 0 {
+			index = len(record.Info)
+		}
+	}
+	timestamp = record.Info[last].TimestampNs
+	comm = tool.CharsToString(record.Info[last].Comm[:])
+	record.Info = record.Info[index:]
+	return timestamp, comm, false
+}
+
+func (s *SSLStore) addSessionScope(scope SessionScope) {
+	s.sessionMu.Lock()
+	defer s.sessionMu.Unlock()
+
+	scopes, ok := s.sessionScopes[scope.Conn]
+	if !ok {
+		scopes = make(map[SessionScope]struct{})
+		s.sessionScopes[scope.Conn] = scopes
+	}
+	scopes[scope] = struct{}{}
+}
+
+func (s *SSLStore) removeSessionScope(scope SessionScope) {
+	s.sessionMu.Lock()
+	defer s.sessionMu.Unlock()
+
+	scopes, ok := s.sessionScopes[scope.Conn]
+	if !ok {
+		return
+	}
+	delete(scopes, scope)
+	if len(scopes) == 0 {
+		delete(s.sessionScopes, scope.Conn)
+	}
+}
+
+func (s *SSLStore) sessionScopesForConn(key SSLKey) map[SessionScope]struct{} {
+	s.sessionMu.Lock()
+	defer s.sessionMu.Unlock()
+
+	scopes, ok := s.sessionScopes[key]
+	if !ok {
+		return nil
+	}
+	result := make(map[SessionScope]struct{}, len(scopes))
+	for scope := range scopes {
+		if _, ok := s.sessions.GetIfPresent(scope); !ok {
+			delete(scopes, scope)
+			continue
+		}
+		result[scope] = struct{}{}
+	}
+	if len(scopes) == 0 {
+		delete(s.sessionScopes, key)
+	}
+	return result
+}
+
+func (s *SSLStore) shouldCleanup(now time.Time) bool {
+	s.cleanupMu.Lock()
+	defer s.cleanupMu.Unlock()
+
+	if now.Before(s.nextCleanup) {
+		return false
+	}
+	s.nextCleanup = now.Add(s.cleanupInterval)
+	return true
+}
+
+func (s *SSLStore) cleanupStaleRequestRecords(cutoff time.Time) {
+	s.reqMu.Lock()
+	defer s.reqMu.Unlock()
+
+	for key, record := range s.Request {
+		if record.LastTouched.Before(cutoff) {
+			delete(s.Request, key)
+		}
+	}
+}
+
+func (s *SSLStore) cleanupStaleResponseRecords(cutoff time.Time) {
+	s.respMu.Lock()
+	defer s.respMu.Unlock()
+
+	for key, record := range s.Response {
+		if record.LastTouched.Before(cutoff) {
+			delete(s.Response, key)
+			s.deleteConnectionSessions(key)
+		}
 	}
 }
 
@@ -277,12 +460,17 @@ func (s *SSLStore) Add(event *sslEvent) {
 }
 
 func (s *SSLStore) parseRequest(reqChan chan *export.RawRequest, postgresChan chan *export.RawPostgres) {
+	now := time.Now()
+	if s.shouldCleanup(now) {
+		s.cleanupStaleRequestRecords(now.Add(-s.recordTTL))
+	}
 	s.reqMu.Lock()
 	defer s.reqMu.Unlock()
 
 	var parser ProtocolParser
 	for key, record := range s.Request {
-		switch s.detectProtocol(key, record) {
+		protocol := s.detectProtocol(key, record)
+		switch protocol {
 		case ProtocolHTTP2:
 			parser = s.http2Parser
 		case ProtocolHTTP1:
@@ -294,119 +482,102 @@ func (s *SSLStore) parseRequest(reqChan chan *export.RawRequest, postgresChan ch
 			delete(s.Request, key)
 			continue
 		}
-		if len(record.Stream) == 0 {
-			continue
-		}
-		request, consumed, err := parser.ParseRequest(record)
-		if err != nil {
-			log.Error().Any("key", &key).Bytes("buf", record.Stream[:min(len(record.Stream), consumed)]).Err(err).Msg("failed to parse TLS request")
-			delete(s.Request, key)
-			continue
-		}
-		// wait for more data
-		if consumed == 0 || !record.EndOfStream {
-			continue
-		}
-		var timestamp uint64
-		var comm string
-		truncated := false
-		if consumed == len(record.Stream) {
-			timestamp = record.Info[len(record.Info)-1].TimestampNs
-			comm = tool.CharsToString(record.Info[len(record.Info)-1].Comm[:])
-			delete(s.Request, key)
-		} else {
-			if consumed >= SSLMaxDataSize {
-				truncated = true
+		for len(record.Stream) > 0 {
+			parsed, consumed, err := parser.ParseRequest(record)
+			if err != nil {
+				log.Error().Any("key", &key).Bytes("buf", record.Stream[:min(len(record.Stream), consumed)]).Err(err).Msg("failed to parse TLS request")
+				delete(s.Request, key)
+				break
 			}
-			record.Stream = record.Stream[consumed:]
-			index := 0
-			last := 0
-			length := consumed
-			for i, info := range record.Info {
-				index = i
-				if length == 0 {
-					break
-				} else if length >= int(info.DataLen) {
-					length -= int(info.DataLen)
-				} else {
-					break
-				}
-				last = i
-				if i == len(record.Info)-1 && length == 0 {
-					// consumed all data
-					index = len(record.Info)
-				}
+			if consumed == 0 {
+				break
 			}
-			timestamp = record.Info[last].TimestampNs
-			comm = tool.CharsToString(record.Info[last].Comm[:])
-			// keep the unparsed info
-			record.Info = record.Info[index:]
-		}
-		if request == nil {
-			// could be a GoAwayFrame (HTTP2) or unrelated Postgres events
-			continue
-		}
-		body, err := readDecodeBytes(request.Body, request.Header.Get("Content-Encoding"))
-		if err != nil {
-			log.Error().Any("key", &key).Err(err).Msg("failed to read request body")
-			continue
-		}
-		url := request.RequestURI
-		if request.URL != nil {
-			url = request.URL.String()
-		}
-		if len(request.Host) > 0 && request.Header != nil {
-			request.Header.Add("Host", request.Host)
-		}
-		headers := flattenMaskedHeader(request.Header)
-		log.Info().Uint64("timestamp", timestamp).Str("comm", comm).Int("len", consumed).Any("headers", headers).Int64("content_length", request.ContentLength).Str("url", url).Str("method", request.Method).Str("protocol", request.Proto).Bytes("body", body).Bool("truncated", truncated).Msg("TLS request")
-		record.EndOfStream = false
-		record.LastResp = nil
 
-		if request.Proto == PostgresProtoRequest {
-			select {
-			case postgresChan <- &export.RawPostgres{
-				ElapsedNs: timestamp,
-				PidTGid:   key.PidTgid,
-				UidGid:    key.UidGid,
-				CgroupID:  key.CgroupID,
-				Comm:      comm,
-				Data:      body,
-				MsgType:   request.Method,
-			}:
-			default:
-				log.Warn().Msg("TLS postgres channel is full, dropping event")
+			timestamp, comm, consumedAll := consumeRecord(record, consumed)
+			if consumedAll && record.EndOfStream && protocol != ProtocolHTTP2 {
+				delete(s.Request, key)
 			}
-		} else {
-			select {
-			case reqChan <- &export.RawRequest{
-				ElapsedNs:     timestamp,
-				PidTGid:       key.PidTgid,
-				UidGid:        key.UidGid,
-				CgroupID:      key.CgroupID,
-				Comm:          comm,
-				Method:        request.Method,
-				URL:           url,
-				ContentLength: request.ContentLength,
-				Protocol:      request.Proto,
-				Headers:       headers,
-				Body:          body,
-				Truncated:     truncated,
-			}:
-			default:
-				log.Warn().Msg("TLS request channel is full, dropping event")
+			if parsed == nil || parsed.Request == nil {
+				record.EndOfStream = false
+				continue
 			}
+			if !record.EndOfStream {
+				continue
+			}
+
+			request := parsed.Request
+			truncated := consumed >= SSLMaxDataSize
+			body, err := readDecodeBytes(request.Body, request.Header.Get("Content-Encoding"))
+			if err != nil {
+				log.Error().Any("key", &key).Err(err).Msg("failed to read request body")
+				record.EndOfStream = false
+				continue
+			}
+			url := request.RequestURI
+			if request.URL != nil {
+				url = request.URL.String()
+			}
+			if len(request.Host) > 0 && request.Header != nil {
+				request.Header.Add("Host", request.Host)
+			}
+			headers := flattenMaskedHeader(request.Header)
+			log.Info().Uint64("timestamp", timestamp).Str("comm", comm).Int("len", consumed).Any("headers", headers).Int64("content_length", request.ContentLength).Str("url", url).Str("method", request.Method).Str("protocol", request.Proto).Bytes("body", body).Bool("truncated", truncated).Msg("TLS request")
+			record.EndOfStream = false
+			record.LastResp = nil
+
+			if request.Proto == PostgresProtoRequest {
+				select {
+				case postgresChan <- &export.RawPostgres{
+					ElapsedNs: timestamp,
+					PidTGid:   key.PidTgid,
+					UidGid:    key.UidGid,
+					CgroupID:  key.CgroupID,
+					Comm:      comm,
+					Data:      body,
+					MsgType:   request.Method,
+				}:
+				default:
+					log.Warn().Msg("TLS postgres channel is full, dropping event")
+				}
+			} else {
+				scope := sessionScopeForKey(key, parsed.StreamID)
+				select {
+				case reqChan <- &export.RawRequest{
+					ElapsedNs:     timestamp,
+					SessionKey:    s.ensureSessionKey(scope),
+					PidTGid:       key.PidTgid,
+					UidGid:        key.UidGid,
+					CgroupID:      key.CgroupID,
+					Comm:          comm,
+					Method:        request.Method,
+					URL:           url,
+					ContentLength: request.ContentLength,
+					Protocol:      request.Proto,
+					Headers:       headers,
+					Body:          body,
+					Truncated:     truncated,
+				}:
+				default:
+					log.Warn().Msg("TLS request channel is full, dropping event")
+				}
+			}
+			break
 		}
 	}
 }
 
 func (s *SSLStore) parseResponse(channel chan *export.RawResponse) {
+	now := time.Now()
+	if s.shouldCleanup(now) {
+		s.cleanupStaleResponseRecords(now.Add(-s.recordTTL))
+	}
 	s.respMu.Lock()
 	defer s.respMu.Unlock()
 
 	var parser ProtocolParser
 	for key, record := range s.Response {
-		switch s.detectProtocol(key, record) {
+		protocol := s.detectProtocol(key, record)
+		switch protocol {
 		case ProtocolHTTP2:
 			parser = s.http2Parser
 		case ProtocolHTTP1:
@@ -416,95 +587,82 @@ func (s *SSLStore) parseResponse(channel chan *export.RawResponse) {
 		default:
 			log.Warn().Any("key", &key).Msg("unknown protocol, skipping parsing")
 			delete(s.Response, key)
+			s.deleteConnectionSessions(key)
 			continue
 		}
 		for len(record.Stream) > 0 {
-			//nolint:bodyclose // io.NopCloser
-			response, consumed, err := parser.ParseResponse(record)
+			parsed, consumed, err := parser.ParseResponse(record)
 			if err != nil {
 				log.Error().Any("key", &key).Bytes("buf", record.Stream[:min(len(record.Stream), consumed)]).Err(err).Msg("failed to parse TLS response")
 				delete(s.Response, key)
+				s.deleteConnectionSessions(key)
 				break
 			}
-			// wait for more data
 			if consumed == 0 {
 				break
 			}
-			var timestamp uint64
-			var comm string
-			if consumed == len(record.Stream) && record.EndOfStream {
-				timestamp = record.Info[len(record.Info)-1].TimestampNs
-				comm = tool.CharsToString(record.Info[len(record.Info)-1].Comm[:])
+
+			timestamp, comm, consumedAll := consumeRecord(record, consumed)
+			if consumedAll && record.EndOfStream && protocol != ProtocolHTTP2 {
 				delete(s.Response, key)
-			} else {
-				// response won't exceed the max size, see github issue #17
-				if consumed > len(record.Stream) {
-					log.Error().Any("key", &key).Int("consumed", consumed).Int("stream_len", len(record.Stream)).Bytes("stream", record.Stream).Msg("consumed length exceeds stream length")
-					consumed = len(record.Stream)
-				}
-				record.Stream = record.Stream[consumed:]
-				index := 0
-				last := 0
-				length := consumed
-				for i, info := range record.Info {
-					index = i
-					if length == 0 {
-						break
-					} else if length >= int(info.DataLen) {
-						length -= int(info.DataLen)
-					} else {
-						// could be the 1st chunk of SSE
-						break
-					}
-					last = i
-					if i == len(record.Info)-1 && length == 0 {
-						// consumed all data
-						index = len(record.Info)
-					}
-				}
-				timestamp = record.Info[last].TimestampNs
-				comm = tool.CharsToString(record.Info[last].Comm[:])
-				// keep the unparsed info
-				record.Info = record.Info[index:]
 			}
-			if record.EndOfStream {
-				if response == nil {
-					break
-				}
-				body, err := readDecodeBytes(response.Body, response.Header.Get("Content-Encoding"))
-				if err != nil {
-					log.Error().Any("key", &key).Err(err).Msg("failed to read response body")
-					continue
-				}
-				headers := flattenMaskedHeader(response.Header)
-				log.Info().Uint64("timestamp", timestamp).Str("comm", comm).Int("len", consumed).Any("headers", headers).Int64("content_length", response.ContentLength).Int("status_code", response.StatusCode).Str("protocol", response.Proto).Bytes("body", body).Bool("truncated", false).Msg("TLS response")
+
+			if parsed == nil {
 				record.EndOfStream = false
-				record.LastResp = nil
-				select {
-				case channel <- &export.RawResponse{
-					ElapsedNs:     timestamp,
-					PidTGid:       key.PidTgid,
-					UidGid:        key.UidGid,
-					CgroupID:      key.CgroupID,
-					Comm:          comm,
-					StatusCode:    response.StatusCode,
-					ContentLength: response.ContentLength,
-					Protocol:      response.Proto,
-					Headers:       headers,
-					Body:          body,
-					Truncated:     false,
-				}:
-				default:
-					log.Warn().Msg("response channel is full, dropping event")
-				}
-				break
+				continue
 			}
+			scope := sessionScopeForKey(key, parsed.StreamID)
+			if parsed.DiscardStream {
+				s.deleteSessionKey(scope)
+				record.EndOfStream = false
+				continue
+			}
+			if parsed.Response == nil {
+				record.EndOfStream = false
+				continue
+			}
+			if !record.EndOfStream {
+				continue
+			}
+
+			response := parsed.Response
+			body, err := readDecodeBytes(response.Body, response.Header.Get("Content-Encoding"))
+			if err != nil {
+				log.Error().Any("key", &key).Err(err).Msg("failed to read response body")
+				s.deleteSessionKey(scope)
+				record.EndOfStream = false
+				continue
+			}
+			headers := flattenMaskedHeader(response.Header)
+			log.Info().Uint64("timestamp", timestamp).Str("comm", comm).Int("len", consumed).Any("headers", headers).Int64("content_length", response.ContentLength).Int("status_code", response.StatusCode).Str("protocol", response.Proto).Bytes("body", body).Bool("truncated", false).Msg("TLS response")
+			record.EndOfStream = false
+			record.LastResp = nil
+			select {
+			case channel <- &export.RawResponse{
+				ElapsedNs:     timestamp,
+				SessionKey:    s.ensureSessionKey(scope),
+				PidTGid:       key.PidTgid,
+				UidGid:        key.UidGid,
+				CgroupID:      key.CgroupID,
+				Comm:          comm,
+				StatusCode:    response.StatusCode,
+				ContentLength: response.ContentLength,
+				Protocol:      response.Proto,
+				Headers:       headers,
+				Body:          body,
+				Truncated:     false,
+			}:
+			default:
+				log.Warn().Msg("response channel is full, dropping event")
+			}
+			s.deleteSessionKey(scope)
+			break
 		}
 	}
 }
 
 func (s *SSLStore) Parse(ctx context.Context, reqChan chan *export.RawRequest, respChan chan *export.RawResponse, postgresChan chan *export.RawPostgres) {
-	ticker := time.NewTicker(s.interval)
+	ticker := time.NewTicker(s.parseInterval)
 	defer ticker.Stop()
 
 	for {
@@ -520,6 +678,6 @@ func (s *SSLStore) Parse(ctx context.Context, reqChan chan *export.RawRequest, r
 }
 
 type ProtocolParser interface {
-	ParseRequest(record *SSLRecord) (*http.Request, int, error)
-	ParseResponse(record *SSLRecord) (*http.Response, int, error)
+	ParseRequest(record *SSLRecord) (*ParsedRequest, int, error)
+	ParseResponse(record *SSLRecord) (*ParsedResponse, int, error)
 }
