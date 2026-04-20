@@ -76,7 +76,7 @@ func (state *HTTP2State) ensureStream(streamID uint32) *HTTP2StreamState {
 	return stream
 }
 
-func (state *HTTP2State) maybeCompleteStream(streamID uint32) *HTTP2ParsedMessage {
+func (state *HTTP2State) tryCompleteStream(streamID uint32) *HTTP2ParsedMessage {
 	stream, ok := state.Streams[streamID]
 	if !ok || !stream.HeadersReady || !stream.Ended {
 		return nil
@@ -84,8 +84,8 @@ func (state *HTTP2State) maybeCompleteStream(streamID uint32) *HTTP2ParsedMessag
 
 	message := &HTTP2ParsedMessage{
 		StreamID: streamID,
-		Headers:  append([]hpack.HeaderField(nil), stream.Headers...),
-		Body:     append([]byte(nil), stream.Body.Bytes()...),
+		Headers:  stream.Headers,
+		Body:     stream.Body.Bytes(),
 	}
 	delete(state.Streams, streamID)
 	return message
@@ -143,7 +143,7 @@ func (h2 *HTTP2Parser) parse(record *SSLRecord) (*HTTP2ParsedMessage, int, error
 			}
 			consumed += frameLen
 			log.Trace().Bool("EOS", stream.Ended).Any("info", &record.Info).Int("lastPos", consumed).Any("type", frame).Msg("parsed another HTTP/2 frame")
-			if message := state.maybeCompleteStream(f.Header().StreamID); message != nil {
+			if message := state.tryCompleteStream(f.Header().StreamID); message != nil {
 				record.EndOfStream = true
 				return message, consumed, nil
 			}
@@ -168,7 +168,7 @@ func (h2 *HTTP2Parser) parse(record *SSLRecord) (*HTTP2ParsedMessage, int, error
 			}
 			consumed += frameLen
 			log.Trace().Bool("EOS", stream.Ended).Any("info", &record.Info).Int("lastPos", consumed).Any("type", frame).Msg("parsed another HTTP/2 frame")
-			if message := state.maybeCompleteStream(f.Header().StreamID); message != nil {
+			if message := state.tryCompleteStream(f.Header().StreamID); message != nil {
 				record.EndOfStream = true
 				return message, consumed, nil
 			}
@@ -180,7 +180,7 @@ func (h2 *HTTP2Parser) parse(record *SSLRecord) (*HTTP2ParsedMessage, int, error
 			}
 			consumed += frameLen
 			log.Trace().Bool("EOS", stream.Ended).Any("info", &record.Info).Int("lastPos", consumed).Any("type", frame).Msg("parsed another HTTP/2 frame")
-			if message := state.maybeCompleteStream(f.Header().StreamID); message != nil {
+			if message := state.tryCompleteStream(f.Header().StreamID); message != nil {
 				record.EndOfStream = true
 				return message, consumed, nil
 			}

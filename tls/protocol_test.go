@@ -27,7 +27,7 @@ func TestSSLStoreSessionKeySequentialPairs(t *testing.T) {
 	respChan := make(chan *export.RawResponse, 1)
 	postgresChan := make(chan *export.RawPostgres, 1)
 
-	store.Request[key] = newTestSSLRecordFromString("GET /first HTTP/1.1\r\nHost: example.com\r\n\r\n", 100)
+	store.Request[key] = newTestSSLRecord([]byte("GET /first HTTP/1.1\r\nHost: example.com\r\n\r\n"), 100)
 	store.parseRequest(reqChan, postgresChan)
 
 	firstReq := mustReadRequest(t, reqChan)
@@ -35,18 +35,18 @@ func TestSSLStoreSessionKeySequentialPairs(t *testing.T) {
 		t.Fatal("expected first request session key")
 	}
 
-	store.Response[key] = newTestSSLRecordFromString("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK", 200)
+	store.Response[key] = newTestSSLRecord([]byte("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK"), 200)
 	store.parseResponse(respChan)
 
 	firstResp := mustReadResponse(t, respChan)
 	if firstResp.SessionKey != firstReq.SessionKey {
 		t.Fatalf("response session key = %q, want %q", firstResp.SessionKey, firstReq.SessionKey)
 	}
-	if hasSession(store, scope) {
+	if _, ok := store.sessions.GetIfPresent(scope); ok {
 		t.Fatal("expected session key to be released after response completion")
 	}
 
-	store.Request[key] = newTestSSLRecordFromString("GET /second HTTP/1.1\r\nHost: example.com\r\n\r\n", 300)
+	store.Request[key] = newTestSSLRecord([]byte("GET /second HTTP/1.1\r\nHost: example.com\r\n\r\n"), 300)
 	store.parseRequest(reqChan, postgresChan)
 
 	secondReq := mustReadRequest(t, reqChan)
@@ -73,7 +73,7 @@ func TestSSLStoreHTTP1SSESessionLifecycle(t *testing.T) {
 	respChan := make(chan *export.RawResponse, 1)
 	postgresChan := make(chan *export.RawPostgres, 1)
 
-	store.Request[key] = newTestSSLRecordFromString("GET /events HTTP/1.1\r\nHost: example.com\r\n\r\n", 100)
+	store.Request[key] = newTestSSLRecord([]byte("GET /events HTTP/1.1\r\nHost: example.com\r\n\r\n"), 100)
 	store.parseRequest(reqChan, postgresChan)
 
 	req := mustReadRequest(t, reqChan)
@@ -81,8 +81,8 @@ func TestSSLStoreHTTP1SSESessionLifecycle(t *testing.T) {
 		t.Fatal("expected request session key")
 	}
 
-	store.Response[key] = newTestSSLRecordFromString(
-		"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Type: text/event-stream\r\n\r\nd\r\ndata: hello\n\n\r\n",
+	store.Response[key] = newTestSSLRecord(
+		[]byte("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Type: text/event-stream\r\n\r\nd\r\ndata: hello\n\n\r\n"),
 		200,
 	)
 	store.parseResponse(respChan)
@@ -92,7 +92,7 @@ func TestSSLStoreHTTP1SSESessionLifecycle(t *testing.T) {
 		t.Fatalf("unexpected response before end-of-stream: %+v", resp)
 	default:
 	}
-	if !hasSession(store, scope) {
+	if _, ok := store.sessions.GetIfPresent(scope); !ok {
 		t.Fatal("expected session key to remain until chunked response ends")
 	}
 
@@ -106,7 +106,7 @@ func TestSSLStoreHTTP1SSESessionLifecycle(t *testing.T) {
 	if string(resp.Body) != "data: hello\n\n" {
 		t.Fatalf("response body = %q, want %q", resp.Body, "data: hello\\n\\n")
 	}
-	if hasSession(store, scope) {
+	if _, ok := store.sessions.GetIfPresent(scope); ok {
 		t.Fatal("expected session key to be released after final chunk")
 	}
 }
@@ -160,10 +160,10 @@ func TestSSLStoreHTTP2SessionKeyPerStream(t *testing.T) {
 	if secondResp.SessionKey != requestSessions["https://example.com/slow"] {
 		t.Fatalf("slow response session key = %q, want %q", secondResp.SessionKey, requestSessions["https://example.com/slow"])
 	}
-	if hasSession(store, sessionScopeForKey(key, 1)) {
+	if _, ok := store.sessions.GetIfPresent(sessionScopeForKey(key, 1)); ok {
 		t.Fatal("expected stream 1 session key to be released")
 	}
-	if hasSession(store, sessionScopeForKey(key, 3)) {
+	if _, ok := store.sessions.GetIfPresent(sessionScopeForKey(key, 3)); ok {
 		t.Fatal("expected stream 3 session key to be released")
 	}
 }
@@ -199,7 +199,7 @@ func TestSSLStoreHTTP2SSESessionLifecycle(t *testing.T) {
 		t.Fatalf("unexpected HTTP/2 SSE response before END_STREAM: %+v", resp)
 	default:
 	}
-	if !hasSession(store, scope) {
+	if _, ok := store.sessions.GetIfPresent(scope); !ok {
 		t.Fatal("expected session key to remain until HTTP/2 stream ends")
 	}
 
@@ -214,7 +214,7 @@ func TestSSLStoreHTTP2SSESessionLifecycle(t *testing.T) {
 	if string(resp.Body) != "data: one\n\ndata: two\n\n" {
 		t.Fatalf("response body = %q, want %q", resp.Body, "data: one\\n\\ndata: two\\n\\n")
 	}
-	if hasSession(store, scope) {
+	if _, ok := store.sessions.GetIfPresent(scope); ok {
 		t.Fatal("expected session key to be released after HTTP/2 END_STREAM")
 	}
 }
@@ -239,7 +239,7 @@ func TestSSLStoreSessionKeyExpiresWithoutResponse(t *testing.T) {
 
 	time.Sleep(50 * time.Millisecond)
 	store.sessions.CleanUp()
-	if hasSession(store, scope) {
+	if _, ok := store.sessions.GetIfPresent(scope); ok {
 		t.Fatal("expected session key to expire without response")
 	}
 	store.sessionScopesForConn(key)
@@ -278,7 +278,7 @@ func TestSSLStoreCleanupStaleRecords(t *testing.T) {
 	if _, ok := store.Request[key]; ok {
 		t.Fatal("expected stale request record to be evicted")
 	}
-	if !hasSession(store, scope) {
+	if _, ok := store.sessions.GetIfPresent(scope); !ok {
 		t.Fatal("expected request cleanup to keep session keys intact")
 	}
 
@@ -286,7 +286,7 @@ func TestSSLStoreCleanupStaleRecords(t *testing.T) {
 	if _, ok := store.Response[key]; ok {
 		t.Fatal("expected stale response record to be evicted")
 	}
-	if hasSession(store, scope) {
+	if _, ok := store.sessions.GetIfPresent(scope); ok {
 		t.Fatal("expected stale response cleanup to remove session keys")
 	}
 	if hasIndexedSessionScope(store, scope) {
@@ -307,10 +307,10 @@ func TestSSLStoreDeleteConnectionSessionsKeepsOtherConnections(t *testing.T) {
 	store.ensureSessionKey(scopeB)
 	store.deleteConnectionSessions(keyA)
 
-	if hasSession(store, scopeA) {
+	if _, ok := store.sessions.GetIfPresent(scopeA); ok {
 		t.Fatal("expected connection A sessions to be removed")
 	}
-	if hasSession(store, scopeB) == false {
+	if _, ok := store.sessions.GetIfPresent(scopeB); !ok {
 		t.Fatal("expected connection B sessions to remain")
 	}
 	if hasIndexedSessionScope(store, scopeA) {
@@ -432,10 +432,6 @@ func writeHTTP2Data(t *testing.T, framer *http2.Framer, streamID uint32, endStre
 	}
 }
 
-func newTestSSLRecordFromString(stream string, timestamp uint64) *SSLRecord {
-	return newTestSSLRecord([]byte(stream), timestamp)
-}
-
 func newTestSSLRecord(stream []byte, timestamp uint64) *SSLRecord {
 	return &SSLRecord{
 		Stream:      stream,
@@ -444,11 +440,6 @@ func newTestSSLRecord(stream []byte, timestamp uint64) *SSLRecord {
 			newTestEventInfo(timestamp, len(stream)),
 		},
 	}
-}
-
-func hasSession(store *SSLStore, scope SessionScope) bool {
-	_, ok := store.sessions.GetIfPresent(scope)
-	return ok
 }
 
 func hasIndexedSessionScope(store *SSLStore, scope SessionScope) bool {

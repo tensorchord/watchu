@@ -494,7 +494,6 @@ func (s *SSLStore) parseRequest(reqChan chan *export.RawRequest, postgresChan ch
 			}
 
 			timestamp, comm, consumedAll := consumeRecord(record, consumed)
-			truncated := consumed >= SSLMaxDataSize
 			if consumedAll && record.EndOfStream && protocol != ProtocolHTTP2 {
 				delete(s.Request, key)
 			}
@@ -507,6 +506,7 @@ func (s *SSLStore) parseRequest(reqChan chan *export.RawRequest, postgresChan ch
 			}
 
 			request := parsed.Request
+			truncated := consumed >= SSLMaxDataSize
 			body, err := readDecodeBytes(request.Body, request.Header.Get("Content-Encoding"))
 			if err != nil {
 				log.Error().Any("key", &key).Err(err).Msg("failed to read request body")
