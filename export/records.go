@@ -70,7 +70,10 @@ type RecordExec struct {
 }
 
 type RecordRequest struct {
-	Timestamp     time.Time       `json:"timestamp"`
+	Timestamp time.Time `json:"timestamp"`
+	// SessionKey is a best-effort correlation key for an observed HTTP exchange.
+	// It is normally created on the request side, but may be created on the response
+	// side when the request was not successfully captured or emitted.
 	SessionKey    string          `json:"session_key"`
 	Pid           int32           `json:"pid"`
 	Tid           int32           `json:"tid"`
@@ -89,7 +92,9 @@ type RecordRequest struct {
 }
 
 type RecordResponse struct {
-	Timestamp     time.Time       `json:"timestamp"`
+	Timestamp time.Time `json:"timestamp"`
+	// SessionKey is a best-effort correlation key for an observed HTTP exchange.
+	// A response may carry a SessionKey even when the matching request event was not emitted.
 	SessionKey    string          `json:"session_key"`
 	Pid           int32           `json:"pid"`
 	Tid           int32           `json:"tid"`
