@@ -22,129 +22,203 @@ const (
 	HTTP2FlagsMask      = 0x1 | 0x4 | 0x8 | 0x20
 )
 
-type HTTP2Parser struct {
-	dec *hpack.Decoder
+type ParsedRequest struct {
+	StreamID uint32
+	Request  *http.Request
 }
 
-func NewHTTP2Parser() *HTTP2Parser {
-	return &HTTP2Parser{
-		dec: hpack.NewDecoder(4096, nil),
+type ParsedResponse struct {
+	StreamID      uint32
+	Response      *http.Response
+	DiscardStream bool
+}
+
+type HTTP2Parser struct{}
+
+type HTTP2State struct {
+	PrefaceConsumed bool
+	Decoder         *hpack.Decoder // HPACK dynamic tables are scoped to one HTTP/2 connection direction.
+	HeaderStreamID  uint32
+	HeaderBlockBuf  []byte
+	Streams         map[uint32]*HTTP2StreamState
+}
+
+type HTTP2StreamState struct {
+	HeadersReady bool
+	Ended        bool
+	Headers      []hpack.HeaderField
+	Body         bytes.Buffer
+}
+
+type HTTP2ParsedMessage struct {
+	StreamID uint32
+	Headers  []hpack.HeaderField
+	Body     []byte
+	Canceled bool
+}
+
+func (record *SSLRecord) ensureHTTP2State() *HTTP2State {
+	if record.HTTP2 == nil {
+		record.HTTP2 = &HTTP2State{
+			Decoder: hpack.NewDecoder(4096, nil),
+			Streams: make(map[uint32]*HTTP2StreamState),
+		}
 	}
+	return record.HTTP2
 }
 
-func (h2 *HTTP2Parser) parse(record *SSLRecord) (headers []hpack.HeaderField, body bytes.Buffer, lastPos int, err error) {
+func (state *HTTP2State) ensureStream(streamID uint32) *HTTP2StreamState {
+	stream, ok := state.Streams[streamID]
+	if !ok {
+		stream = &HTTP2StreamState{}
+		state.Streams[streamID] = stream
+	}
+	return stream
+}
+
+func (state *HTTP2State) maybeCompleteStream(streamID uint32) *HTTP2ParsedMessage {
+	stream, ok := state.Streams[streamID]
+	if !ok || !stream.HeadersReady || !stream.Ended {
+		return nil
+	}
+
+	message := &HTTP2ParsedMessage{
+		StreamID: streamID,
+		Headers:  append([]hpack.HeaderField(nil), stream.Headers...),
+		Body:     append([]byte(nil), stream.Body.Bytes()...),
+	}
+	delete(state.Streams, streamID)
+	return message
+}
+
+func (h2 *HTTP2Parser) parse(record *SSLRecord) (*HTTP2ParsedMessage, int, error) {
+	record.EndOfStream = false
+	state := record.ensureHTTP2State()
 	data := record.Stream
-	if bytes.HasPrefix(record.Stream, HTTP2Preface) {
-		lastPos += HTTP2PrefaceLen
+	consumed := 0
+
+	if !state.PrefaceConsumed && bytes.HasPrefix(data, HTTP2Preface) {
+		state.PrefaceConsumed = true
+		consumed += HTTP2PrefaceLen
 		data = data[HTTP2PrefaceLen:]
 	}
 
 	reader := bytes.NewReader(data)
 	framer := http2.NewFramer(nil, reader)
-	var frame http2.Frame
-	var hbStreamID uint32
-	var hbBuf []byte
-	var hbOpen bool
 
-	for !record.EndOfStream {
-		frame, err = framer.ReadFrame()
+	for {
+		frame, err := framer.ReadFrame()
 		if err != nil {
 			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-				// wait for more data, suppress the EOF error
-				err = nil
 				log.Trace().Int("len", len(data)).Str("buf", hex.EncodeToString(data)).Msg("HTTP/2 parsing reaches EOF")
-				return
+				return nil, consumed, nil
 			}
-			err = fmt.Errorf("failed to read HTTP/2 frame: %w", err)
-			return
+			return nil, consumed, fmt.Errorf("failed to read HTTP/2 frame: %w", err)
 		}
+
+		frameLen := int(frame.Header().Length) + HTTP2FrameHeaderLen
 		switch f := frame.(type) {
 		case *http2.HeadersFrame:
-			if hbOpen && hbStreamID != f.Header().StreamID {
-				err = fmt.Errorf("protocol error: new HEADERS on %d while block open on %d", f.Header().StreamID, hbStreamID)
-				return
+			if state.HeaderStreamID != 0 && state.HeaderStreamID != f.Header().StreamID {
+				return nil, consumed, fmt.Errorf("protocol error: new HEADERS on %d while block open on %d", f.Header().StreamID, state.HeaderStreamID)
 			}
-			if !hbOpen {
-				hbOpen = true
-				hbStreamID = f.Header().StreamID
-				hbBuf = hbBuf[:0]
+			if state.HeaderStreamID == 0 {
+				state.HeaderStreamID = f.Header().StreamID
+				state.HeaderBlockBuf = state.HeaderBlockBuf[:0]
 			}
-			hbBuf = append(hbBuf, f.HeaderBlockFragment()...)
+			stream := state.ensureStream(f.Header().StreamID)
+			state.HeaderBlockBuf = append(state.HeaderBlockBuf, f.HeaderBlockFragment()...)
 			if f.HeadersEnded() {
-				var hdrs []hpack.HeaderField
-				hdrs, err = h2.dec.DecodeFull(hbBuf)
+				headers, err := state.Decoder.DecodeFull(state.HeaderBlockBuf)
 				if err != nil {
-					err = fmt.Errorf("failed to decode HTTP/2 headers: %w", err)
-					return
+					return nil, consumed, fmt.Errorf("failed to decode HTTP/2 headers: %w", err)
 				}
-				headers = append(headers, hdrs...)
-				hbOpen = false
+				stream.Headers = append(stream.Headers, headers...)
+				stream.HeadersReady = true
+				state.HeaderStreamID = 0
+				state.HeaderBlockBuf = state.HeaderBlockBuf[:0]
 			}
 			if f.StreamEnded() {
+				stream.Ended = true
+			}
+			consumed += frameLen
+			log.Trace().Bool("EOS", stream.Ended).Any("info", &record.Info).Int("lastPos", consumed).Any("type", frame).Msg("parsed another HTTP/2 frame")
+			if message := state.maybeCompleteStream(f.Header().StreamID); message != nil {
 				record.EndOfStream = true
+				return message, consumed, nil
 			}
 		case *http2.ContinuationFrame:
-			if !hbOpen {
-				err = fmt.Errorf("protocol error: unexpected CONTINUATION on %d without HEADER block open", f.Header().StreamID)
-				return
+			if state.HeaderStreamID == 0 {
+				return nil, consumed, fmt.Errorf("protocol error: unexpected CONTINUATION on %d without HEADER block open", f.Header().StreamID)
 			}
-			if hbOpen && hbStreamID != f.Header().StreamID {
-				err = fmt.Errorf("protocol error: CONTINUATION on %d while block open on %d", f.Header().StreamID, hbStreamID)
-				return
+			if state.HeaderStreamID != f.Header().StreamID {
+				return nil, consumed, fmt.Errorf("protocol error: CONTINUATION on %d while block open on %d", f.Header().StreamID, state.HeaderStreamID)
 			}
-			hbBuf = append(hbBuf, f.HeaderBlockFragment()...)
+			stream := state.ensureStream(f.Header().StreamID)
+			state.HeaderBlockBuf = append(state.HeaderBlockBuf, f.HeaderBlockFragment()...)
 			if f.HeadersEnded() {
-				var hdrs []hpack.HeaderField
-				hdrs, err = h2.dec.DecodeFull(hbBuf)
+				headers, err := state.Decoder.DecodeFull(state.HeaderBlockBuf)
 				if err != nil {
-					err = fmt.Errorf("failed to decode HTTP/2 headers: %w", err)
-					return
+					return nil, consumed, fmt.Errorf("failed to decode HTTP/2 headers: %w", err)
 				}
-				headers = append(headers, hdrs...)
-				hbOpen = false
+				stream.Headers = append(stream.Headers, headers...)
+				stream.HeadersReady = true
+				state.HeaderStreamID = 0
+				state.HeaderBlockBuf = state.HeaderBlockBuf[:0]
+			}
+			consumed += frameLen
+			log.Trace().Bool("EOS", stream.Ended).Any("info", &record.Info).Int("lastPos", consumed).Any("type", frame).Msg("parsed another HTTP/2 frame")
+			if message := state.maybeCompleteStream(f.Header().StreamID); message != nil {
+				record.EndOfStream = true
+				return message, consumed, nil
 			}
 		case *http2.DataFrame:
-			body.Write(f.Data())
+			stream := state.ensureStream(f.Header().StreamID)
+			stream.Body.Write(f.Data())
 			if f.StreamEnded() {
+				stream.Ended = true
+			}
+			consumed += frameLen
+			log.Trace().Bool("EOS", stream.Ended).Any("info", &record.Info).Int("lastPos", consumed).Any("type", frame).Msg("parsed another HTTP/2 frame")
+			if message := state.maybeCompleteStream(f.Header().StreamID); message != nil {
 				record.EndOfStream = true
+				return message, consumed, nil
 			}
 		case *http2.RSTStreamFrame:
+			delete(state.Streams, f.Header().StreamID)
+			if state.HeaderStreamID == f.Header().StreamID {
+				state.HeaderStreamID = 0
+				state.HeaderBlockBuf = state.HeaderBlockBuf[:0]
+			}
+			consumed += frameLen
 			record.EndOfStream = true
+			log.Trace().Any("info", &record.Info).Int("lastPos", consumed).Any("type", frame).Msg("reset HTTP/2 stream")
+			return &HTTP2ParsedMessage{StreamID: f.Header().StreamID, Canceled: true}, consumed, nil
 		case *http2.GoAwayFrame:
-			record.EndOfStream = true
+			consumed += frameLen
+			log.Trace().Any("info", &record.Info).Int("lastPos", consumed).Any("type", frame).Msg("received HTTP/2 GOAWAY frame")
 		default:
-			// ignore other connection-level frames
-			log.Trace().Bool("EOS", record.EndOfStream).Any("info", &record.Info).Str("frame", fmt.Sprintf("%T", f)).Msg("ignoring non-header/data frame")
+			consumed += frameLen
+			log.Trace().Any("info", &record.Info).Int("lastPos", consumed).Str("frame", fmt.Sprintf("%T", f)).Msg("ignoring non-header/data frame")
 		}
-		lastPos += int(frame.Header().Length) + HTTP2FrameHeaderLen
-		log.Trace().Bool("EOS", record.EndOfStream).Any("info", &record.Info).Int("lastPos", lastPos).Any("type", frame).Msg("parsed another HTTP/2 frame")
 	}
-	return
 }
 
-func (h2 *HTTP2Parser) ParseRequest(record *SSLRecord) (*http.Request, int, error) {
-	headers, body, lastPos, err := h2.parse(record)
+func (h2 *HTTP2Parser) ParseRequest(record *SSLRecord) (*ParsedRequest, int, error) {
+	message, consumed, err := h2.parse(record)
 	if err != nil {
-		return nil, lastPos, err
+		return nil, consumed, err
+	}
+	if message == nil {
+		return nil, consumed, nil
+	}
+	if message.Canceled {
+		return nil, consumed, nil
 	}
 
-	if !record.EndOfStream && lastPos+SSLMaxEventSize > SSLMaxDataSize {
-		// truncate the request body
-		log.Debug().Int("lastPos", lastPos).Msg("truncate HTTP/2 request body")
-		record.EndOfStream = true
-	}
-	if !record.EndOfStream {
-		// wait for more data
-		return nil, 0, nil
-	}
-	// could be a GoAwayFrame, no need to record this one
-	if len(headers) == 0 && body.Len() == 0 {
-		return nil, lastPos, nil
-	}
-	// convert headers to http.Request
 	hdrs := http.Header{}
 	var method, scheme, path, authority string
-	for _, hf := range headers {
+	for _, hf := range message.Headers {
 		switch hf.Name {
 		case ":method":
 			method = hf.Value
@@ -171,44 +245,54 @@ func (h2 *HTTP2Parser) ParseRequest(record *SSLRecord) (*http.Request, int, erro
 		Proto:      "HTTP/2.0",
 		ProtoMajor: 2,
 		ProtoMinor: 0,
-		Body:       io.NopCloser(&body),
+		Body:       io.NopCloser(bytes.NewReader(message.Body)),
 	}
-	return req, lastPos, nil
+	return &ParsedRequest{
+		StreamID: message.StreamID,
+		Request:  req,
+	}, consumed, nil
 }
 
-func (h2 *HTTP2Parser) ParseResponse(record *SSLRecord) (*http.Response, int, error) {
-	headers, body, lastPos, err := h2.parse(record)
+func (h2 *HTTP2Parser) ParseResponse(record *SSLRecord) (*ParsedResponse, int, error) {
+	message, consumed, err := h2.parse(record)
 	if err != nil {
-		return nil, lastPos, err
+		return nil, consumed, err
+	}
+	if message == nil {
+		return nil, consumed, nil
+	}
+	if message.Canceled {
+		return &ParsedResponse{
+			StreamID:      message.StreamID,
+			DiscardStream: true,
+		}, consumed, nil
 	}
 
-	// create a new Response
-	if record.LastResp == nil {
-		// convert headers to http.Response
-		hdrs := http.Header{}
-		var code int
-		for _, hf := range headers {
-			switch hf.Name {
-			case ":status":
-				code, err = strconv.Atoi(hf.Value)
-				if err != nil {
-					return nil, lastPos, fmt.Errorf("invalid status code: %s", hf.Value)
-				}
-			default:
-				hdrs.Add(hf.Name, hf.Value)
+	hdrs := http.Header{}
+	var code int
+	for _, hf := range message.Headers {
+		switch hf.Name {
+		case ":status":
+			code, err = strconv.Atoi(hf.Value)
+			if err != nil {
+				return nil, consumed, fmt.Errorf("invalid status code: %s", hf.Value)
 			}
+		default:
+			hdrs.Add(hf.Name, hf.Value)
 		}
-		record.LastResp = &http.Response{
-			Status:     fmt.Sprintf("%d %s", code, http.StatusText(code)),
-			StatusCode: code,
-			Header:     hdrs,
-			Proto:      "HTTP/2.0",
-			ProtoMajor: 2,
-			ProtoMinor: 0,
-			Body:       io.NopCloser(&body),
-		}
-	} else {
-		record.LastResp.Body = io.NopCloser(io.MultiReader(record.LastResp.Body, &body))
 	}
-	return record.LastResp, lastPos, nil
+
+	resp := &http.Response{
+		Status:     fmt.Sprintf("%d %s", code, http.StatusText(code)),
+		StatusCode: code,
+		Header:     hdrs,
+		Proto:      "HTTP/2.0",
+		ProtoMajor: 2,
+		ProtoMinor: 0,
+		Body:       io.NopCloser(bytes.NewReader(message.Body)),
+	}
+	return &ParsedResponse{
+		StreamID: message.StreamID,
+		Response: resp,
+	}, consumed, nil
 }
