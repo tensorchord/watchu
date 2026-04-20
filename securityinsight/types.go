@@ -3,10 +3,10 @@ package securityinsight
 import "time"
 
 const (
-	defaultMaxEvents      = 50
-	defaultMaxAgentOutput = 12000
+	defaultMaxEvents       = 50
+	defaultMaxAgentOutput  = 12000
 	defaultMaxSnippetChars = 4000
-	defaultMaxLLMCalls    = 25
+	defaultMaxLLMCalls     = 25
 )
 
 // OutputFormat controls the rendering mode for collected evidence.
@@ -60,10 +60,10 @@ const (
 
 // CollectOptions controls how much evidence is included in the output.
 type CollectOptions struct {
-	MaxEvents      int
-	MaxAgentOutput int
+	MaxEvents       int
+	MaxAgentOutput  int
 	MaxSnippetChars int
-	MaxLLMCalls    int
+	MaxLLMCalls     int
 }
 
 func (o CollectOptions) normalize() CollectOptions {
@@ -83,12 +83,7 @@ func (o CollectOptions) normalize() CollectOptions {
 }
 
 func (o CollectOptions) budget() EvidenceBudget {
-	return EvidenceBudget{
-		MaxEvents:       o.MaxEvents,
-		MaxAgentOutput:  o.MaxAgentOutput,
-		MaxSnippetChars: o.MaxSnippetChars,
-		MaxLLMCalls:     o.MaxLLMCalls,
-	}
+	return EvidenceBudget(o)
 }
 
 // EvidenceBudget records the size limits applied during collection.
@@ -189,13 +184,13 @@ const (
 type DetailFocus string
 
 const (
-	DetailFocusExec        DetailFocus = "exec"
-	DetailFocusFileRead    DetailFocus = "file_read"
-	DetailFocusFileWrite   DetailFocus = "file_write"
-	DetailFocusNetwork     DetailFocus = "network"
-	DetailFocusHTTP        DetailFocus = "http"
-	DetailFocusMCP     DetailFocus = "mcp"
-	DetailFocusAll     DetailFocus = "all"
+	DetailFocusExec      DetailFocus = "exec"
+	DetailFocusFileRead  DetailFocus = "file_read"
+	DetailFocusFileWrite DetailFocus = "file_write"
+	DetailFocusNetwork   DetailFocus = "network"
+	DetailFocusHTTP      DetailFocus = "http"
+	DetailFocusMCP       DetailFocus = "mcp"
+	DetailFocusAll       DetailFocus = "all"
 )
 
 // CategoryOverview summarizes one event category in a scan.

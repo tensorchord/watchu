@@ -98,9 +98,9 @@ type baseFlags struct {
 
 func registerBaseFlags(fs *flag.FlagSet) baseFlags {
 	return baseFlags{
-		input:          fs.String("input", "", "JSONL file path or glob pattern (required)"),
-		format:         fs.String("format", "prompt", "Output format: prompt or json"),
-		maxEvents:      fs.Int("max-events", 50, "Max events in output"),
+		input:           fs.String("input", "", "JSONL file path or glob pattern (required)"),
+		format:          fs.String("format", "prompt", "Output format: prompt or json"),
+		maxEvents:       fs.Int("max-events", 50, "Max events in output"),
 		maxAgentOutput:  fs.Int("max-agent-output", 12000, "Max total chars for agent output excerpts"),
 		maxSnippetChars: fs.Int("max-snippet-chars", 4000, "Max chars per field in each LLM call record"),
 		maxLLMCalls:     fs.Int("max-llm-calls", 25, "Max LLM API call pairs in output"),
@@ -345,11 +345,11 @@ func writeMultiScanOutput(
 			exitf("Error collecting scan for run %d (%s): %v", i+1, run.RootExecID, err)
 		}
 		pkg.Selection = map[string]any{
-			"run_index":       i + 1,
+			"run_index":        i + 1,
 			"total_agent_runs": len(runs),
-			"agent_provider":  run.AgentProvider,
-			"host":            run.Host,
-			"event_count":     run.EventCount,
+			"agent_provider":   run.AgentProvider,
+			"host":             run.Host,
+			"event_count":      run.EventCount,
 		}
 		if !selector.Since.IsZero() {
 			pkg.Selection["since"] = selector.Since.Format(time.RFC3339)

@@ -1,11 +1,9 @@
 package securityinsight
 
 import (
-	"encoding/base64"
 	"fmt"
 	"os"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -653,26 +651,6 @@ func ComputeRootExecIDs(execs []export.RecordExec, tree *ProcessTree) map[string
 		}
 	}
 	return roots
-}
-
-// pidFromExecID extracts the PID encoded in an exec_id.
-// exec_id is base64(\"host:{hostname}:{id}:{pid}\"); the last colon-delimited
-// segment is the decimal PID. Returns 0 on any parse failure.
-func pidFromExecID(execID string) int32 {
-	decoded, err := base64.StdEncoding.DecodeString(execID)
-	if err != nil {
-		// fallback: try raw string (not all exec_ids are base64)
-		decoded = []byte(execID)
-	}
-	parts := strings.Split(string(decoded), ":")
-	if len(parts) < 2 {
-		return 0
-	}
-	pid, err := strconv.ParseInt(parts[len(parts)-1], 10, 32)
-	if err != nil {
-		return 0
-	}
-	return int32(pid)
 }
 
 // emptyDash returns "-" for empty strings.

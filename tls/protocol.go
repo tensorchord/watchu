@@ -343,32 +343,6 @@ func (s *SSLStore) cleanupStaleResponseRecords(cutoff time.Time) {
 	}
 }
 
-func generateSessionKey() string {
-	sessionKey, err := uuid.NewV7()
-	if err != nil {
-		return fmt.Sprintf("unknown-session-%d", time.Now().UnixNano())
-	}
-	return sessionKey.String()
-}
-
-func (s *SSLStore) ensureSessionKey(key SSLKey) string {
-	s.sessionMu.Lock()
-	defer s.sessionMu.Unlock()
-
-	if sessionKey, ok := s.sessions[key]; ok {
-		return sessionKey
-	}
-	sessionKey := generateSessionKey()
-	s.sessions[key] = sessionKey
-	return sessionKey
-}
-
-func (s *SSLStore) deleteSessionKey(key SSLKey) {
-	s.sessionMu.Lock()
-	delete(s.sessions, key)
-	s.sessionMu.Unlock()
-}
-
 // detectProtocol tries to determine the protocol type based on the initial bytes of the stream.
 // This assumption should be consistent throughout the lifetime of the SSL+Pid+Uid tuple.
 //

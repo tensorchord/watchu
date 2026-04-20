@@ -80,14 +80,13 @@ var authConfigPaths = []string{
 // ────────────────────────────────────────────────────────────────────────────
 
 var (
-	reDestructive       = regexp.MustCompile(`(?i)(rm\s+(-[a-z]*f[a-z]*\s+)?(-[a-z]*r[a-z]*\s+)?(\/|~|\.\.)|mkfs|dd\s+if=|wipefs|shred\s|find\s.*-delete)`)
-	reReverseShell      = regexp.MustCompile(`(?i)(bash\s+-i\s+>&\s*/dev/tcp|/dev/tcp/|nc\s+-e\s+/bin|ncat\s+.*-e\s+|socat\s+.*exec:|socat\s+.*pty)`)
-	reCurlPipeShell     = regexp.MustCompile(`(?i)(curl|wget)\s+.*\|\s*(ba)?sh`)
-	reBase64Exec        = regexp.MustCompile(`(?i)base64\s+-d.*\|\s*(ba)?sh`)
-	reSensitiveChmod    = regexp.MustCompile(`(?i)(openclaw\.json|paired\.json|authorized_keys|sshd_config)`)
-	reCredentialInArgs  = regexp.MustCompile(`(?i)(token=|key=|password=|passwd=|secret=|api_key=)`)
-	reCommandSubst      = regexp.MustCompile(`\$\(.*\)`)
-	reCommandSubstSens  = regexp.MustCompile(`\$\(.*\b(cat|head|tail|grep)\b.*(shadow|passwd|\.ssh|key|token|secret)`)
+	reDestructive      = regexp.MustCompile(`(?i)(rm\s+(-[a-z]*f[a-z]*\s+)?(-[a-z]*r[a-z]*\s+)?(\/|~|\.\.)|mkfs|dd\s+if=|wipefs|shred\s|find\s.*-delete)`)
+	reReverseShell     = regexp.MustCompile(`(?i)(bash\s+-i\s+>&\s*/dev/tcp|/dev/tcp/|nc\s+-e\s+/bin|ncat\s+.*-e\s+|socat\s+.*exec:|socat\s+.*pty)`)
+	reCurlPipeShell    = regexp.MustCompile(`(?i)(curl|wget)\s+.*\|\s*(ba)?sh`)
+	reBase64Exec       = regexp.MustCompile(`(?i)base64\s+-d.*\|\s*(ba)?sh`)
+	reSensitiveChmod   = regexp.MustCompile(`(?i)(openclaw\.json|paired\.json|authorized_keys|sshd_config)`)
+	reCredentialInArgs = regexp.MustCompile(`(?i)(token=|key=|password=|passwd=|secret=|api_key=)`)
+	reCommandSubstSens = regexp.MustCompile(`\$\(.*\b(cat|head|tail|grep)\b.*(shadow|passwd|\.ssh|key|token|secret)`)
 )
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -97,12 +96,12 @@ var (
 type timedEventKind string
 
 const (
-	kindExec     timedEventKind = "exec"
+	kindExec      timedEventKind = "exec"
 	kindFileRead  timedEventKind = "file_read"
 	kindFileWrite timedEventKind = "file_write"
-	kindTCPConn  timedEventKind = "tcp_connect"
-	kindHTTP     timedEventKind = "http_request"
-	kindStdIO    timedEventKind = "stdio"
+	kindTCPConn   timedEventKind = "tcp_connect"
+	kindHTTP      timedEventKind = "http_request"
+	kindStdIO     timedEventKind = "stdio"
 )
 
 type timedEvent struct {
@@ -381,7 +380,7 @@ func DetectRedFlags(events *FilteredEvents) []RedFlag {
 
 	// S9 — file write to shell RC paths containing alias override or PATH hijack
 	for _, e := range events.FileOps {
-		if !(e.Create || e.Truncate || e.Append) {
+		if !e.Create && !e.Truncate && !e.Append {
 			continue
 		}
 		path := strings.ToLower(e.Path)
@@ -424,7 +423,11 @@ func DetectSuspiciousSequences(events *FilteredEvents, windowDur time.Duration) 
 		out = append(out, seq)
 	}
 
-	const maxWindow = 60 * time.Second
+	const defaultWindow = 60 * time.Second
+	maxWindow := defaultWindow
+	if windowDur > 0 && windowDur < maxWindow {
+		maxWindow = windowDur
+	}
 
 	for i := 0; i < len(tl); i++ {
 		trigger := tl[i]
@@ -456,8 +459,8 @@ func DetectSuspiciousSequences(events *FilteredEvents, windowDur time.Duration) 
 		isT8Trigger := trigger.Kind == kindFileWrite
 
 		// Skip triggers that cannot match any rule.
-		if !(isT1Trigger || isT2Trigger || isT3aTrigger || isT3bTrigger ||
-			isT5Trigger || isT6Trigger || isT7Trigger || isT8Trigger) {
+		if !isT1Trigger && !isT2Trigger && !isT3aTrigger && !isT3bTrigger &&
+			!isT5Trigger && !isT6Trigger && !isT7Trigger && !isT8Trigger {
 			continue
 		}
 

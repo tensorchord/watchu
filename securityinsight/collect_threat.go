@@ -86,16 +86,32 @@ func collectEventSamples(events *FilteredEvents, maxSamples int) []EventSample {
 	// gets at least 1 slot. Two rounds to redistribute unused slots.
 	budgets := make([]int, len(pools))
 	remaining := maxSamples
-	for i := range pools {
-		if len(pools[i].items) == 0 {
-			continue
+	if maxSamples < nonEmpty {
+		// Not enough slots for every category to get at least 1;
+		// give 1 slot to the first maxSamples non-empty pools only.
+		given := 0
+		for i := range pools {
+			if given >= maxSamples {
+				break
+			}
+			if len(pools[i].items) > 0 {
+				budgets[i] = 1
+				given++
+			}
 		}
-		share := max(1, maxSamples*len(pools[i].items)/totalAvailable)
-		if share > len(pools[i].items) {
-			share = len(pools[i].items)
+		remaining = 0
+	} else {
+		for i := range pools {
+			if len(pools[i].items) == 0 {
+				continue
+			}
+			share := max(1, maxSamples*len(pools[i].items)/totalAvailable)
+			if share > len(pools[i].items) {
+				share = len(pools[i].items)
+			}
+			budgets[i] = share
+			remaining -= share
 		}
-		budgets[i] = share
-		remaining -= share
 	}
 	// Redistribute remaining budget to categories that still have headroom.
 	for remaining > 0 {

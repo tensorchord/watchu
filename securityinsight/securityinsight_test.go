@@ -138,7 +138,9 @@ func TestLoadEventsGlob(t *testing.T) {
 				Timestamp: ts, Pid: 1, ExecId: "e-" + name, Comm: "test",
 			},
 		}
-		json.NewEncoder(f).Encode(rec)
+		if err := json.NewEncoder(f).Encode(rec); err != nil {
+			t.Fatal(err)
+		}
 		f.Close()
 	}
 
@@ -866,8 +868,8 @@ func TestIsExternalAddr(t *testing.T) {
 		{"172.17.0.1", false},
 		{"172.20.0.1", false},   // was a bug: 172.18-31 not covered
 		{"172.31.255.1", false}, // upper bound of RFC 1918
-		{"172.32.0.1", true},   // just outside private range
-		{"172.15.0.1", true},   // just below private range
+		{"172.32.0.1", true},    // just outside private range
+		{"172.15.0.1", true},    // just below private range
 		{"169.254.1.1", false},
 		{"localhost", false},
 	}

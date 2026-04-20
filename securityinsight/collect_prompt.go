@@ -46,14 +46,14 @@ func CollectPromptEvidence(store *EventStore, tree *ProcessTree, host string, si
 	}, opts)
 
 	return &PromptEvidencePackage{
-		AnalysisType: AnalysisTypePrompt,
-		Host:         host,
-		Since:        since.Format(time.RFC3339),
-		Until:        until.Format(time.RFC3339),
-		Goal:         "Determine whether prompt injection likely occurred within the selected host and time window.",
-		Budget:       opts.budget(),
+		AnalysisType:     AnalysisTypePrompt,
+		Host:             host,
+		Since:            since.Format(time.RFC3339),
+		Until:            until.Format(time.RFC3339),
+		Goal:             "Determine whether prompt injection likely occurred within the selected host and time window.",
+		Budget:           opts.budget(),
 		TelemetrySummary: promptTelemetry(candidates),
-		Candidates:   clampCandidates(candidates, opts.MaxLLMCalls),
+		Candidates:       clampCandidates(candidates, opts.MaxLLMCalls),
 		Notes: []string{
 			"Prompt and HTTP payload snippets are truncated to fit the context budget.",
 			"Candidates are the highest-priority rows returned by LLM API URL pattern matching for this host and time window.",
@@ -124,9 +124,10 @@ func findPromptCandidates(store *EventStore, tree *ProcessTree, f promptFilter, 
 	respIndex := make(map[string]export.RecordResponse, len(store.Responses))
 	for i := range store.Responses {
 		rec := &store.Responses[i]
-		respIndex[rec.SessionKey] = *rec
+		if rec.SessionKey != "" {
+			respIndex[rec.SessionKey] = *rec
+		}
 	}
-
 	candidates := make([]PromptCandidate, 0, 8)
 
 	for i := range store.Requests {
@@ -167,8 +168,10 @@ func findPromptCandidates(store *EventStore, tree *ProcessTree, f promptFilter, 
 		model := extractModelFromBody(req.Body)
 
 		respBody := ""
-		if resp, ok := respIndex[req.SessionKey]; ok {
-			respBody = string(resp.Body)
+		if req.SessionKey != "" {
+			if resp, ok := respIndex[req.SessionKey]; ok {
+				respBody = string(resp.Body)
+			}
 		}
 
 		candidate := PromptCandidate{
@@ -176,9 +179,9 @@ func findPromptCandidates(store *EventStore, tree *ProcessTree, f promptFilter, 
 			Provider:      provider,
 			Model:         model,
 			RootExecID:    candidateRootExecID,
-		PromptSnippet: trimForBudget(extractPromptSnippet(req.Body), opts.MaxSnippetChars),
-		RequestBody:   trimForBudget(string(req.Body), opts.MaxSnippetChars),
-		ResponseBody:  trimForBudget(respBody, opts.MaxSnippetChars/2),
+			PromptSnippet: trimForBudget(extractPromptSnippet(req.Body), opts.MaxSnippetChars),
+			RequestBody:   trimForBudget(string(req.Body), opts.MaxSnippetChars),
+			ResponseBody:  trimForBudget(respBody, opts.MaxSnippetChars/2),
 		}
 		candidates = append(candidates, candidate)
 	}
