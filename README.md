@@ -1,6 +1,6 @@
 <div align="center">
 
-<img width=196 src="https://github.com/user-attachments/assets/fa28f01c-b500-4f06-ac8f-bcdcd99d9f42">
+<img width="196" src="https://github.com/user-attachments/assets/fa28f01c-b500-4f06-ac8f-bcdcd99d9f42" alt="WatchU logo">
 
 <p>
 
