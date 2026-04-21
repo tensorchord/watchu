@@ -1,0 +1,7 @@
+[default.extend-words]
+# eBPF
+PARM = "PARM"
+# eBPF headers
+TOU = "TOU"
+RTO = "RTO"
+ECT = "ECT"
