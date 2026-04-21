@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -210,12 +211,14 @@ func (m model) View() string {
 }
 
 func (m *model) appendRecord(tab string, record displayRecord) {
-	m.recordsByTab[tab] = append(m.recordsByTab[tab], record)
-	slices.SortStableFunc(m.recordsByTab[tab], func(a, b displayRecord) int {
-		return a.Timestamp.Compare(b.Timestamp)
+	records := m.recordsByTab[tab]
+	insertAt := sort.Search(len(records), func(i int) bool {
+		return !records[i].Timestamp.Before(record.Timestamp)
 	})
-	if len(m.recordsByTab[tab]) > maxEventsPerTab {
-		m.recordsByTab[tab] = m.recordsByTab[tab][len(m.recordsByTab[tab])-maxEventsPerTab:]
+	records = slices.Insert(records, insertAt, record)
+	m.recordsByTab[tab] = records
+	if len(records) > maxEventsPerTab {
+		m.recordsByTab[tab] = records[len(records)-maxEventsPerTab:]
 		if m.listStartByTab[tab] > 0 {
 			m.listStartByTab[tab]--
 		}
@@ -489,9 +492,6 @@ func clampLines(s string, offset int, height int) string {
 	}
 	if len(lines)-offset <= height {
 		return strings.Join(lines[offset:], "\n")
-	}
-	if len(lines) <= height && offset == 0 {
-		return s
 	}
 	return strings.Join(lines[offset:offset+height], "\n")
 }

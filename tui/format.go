@@ -117,7 +117,7 @@ func eventTimestamp(event map[string]any, fallback time.Time) time.Time {
 	if raw == "" {
 		return fallback
 	}
-	ts, err := time.Parse(time.RFC3339, raw)
+	ts, err := time.Parse(time.RFC3339Nano, raw)
 	if err != nil {
 		return fallback
 	}
