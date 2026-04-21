@@ -4,6 +4,7 @@
 
 - cmd
   Application entrypoint.
+  - securityinsight: standalone OSS CLI entrypoint for collecting security insight evidence from exported JSONL telemetry.
 
 - export
   Event normalization and sinks. Converts raw probe output into exported records and writes to a gateway, local JSONL files, or discard.
@@ -19,6 +20,9 @@
 
 - otelrecv
   OTLP gRPC receiver for AI tool telemetry ingestion.
+
+- securityinsight
+  Offline security analysis helpers for exported JSONL telemetry. Loads events, rebuilds process trees, resolves agent runs, collects prompt-injection and threat evidence, and renders two-phase scan/detail outputs for the `cmd/securityinsight` CLI.
 
 - tui
   Terminal UI for viewing locally exported JSONL events.
