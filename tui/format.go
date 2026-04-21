@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -28,10 +29,11 @@ func parseJSONLRecord(line []byte) (displayRecord, error) {
 
 	def := endpointDefinitionFor(record.Endpoint)
 	return displayRecord{
-		Endpoint:  record.Endpoint,
-		Timestamp: record.Timestamp,
-		Summary:   def.Summarize(event, raw),
-		Detail:    renderEventDetail(def, raw),
+		Endpoint:   record.Endpoint,
+		Timestamp:  eventTimestamp(event, record.Timestamp),
+		SessionKey: fieldString(event, "session_key"),
+		Summary:    def.Summarize(event, raw),
+		Detail:     renderEventDetail(def, raw),
 	}, nil
 }
 
@@ -108,4 +110,16 @@ func isPrintableUTF8(data []byte) bool {
 		}
 	}
 	return true
+}
+
+func eventTimestamp(event map[string]any, fallback time.Time) time.Time {
+	raw := fieldString(event, "timestamp")
+	if raw == "" {
+		return fallback
+	}
+	ts, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return fallback
+	}
+	return ts
 }
