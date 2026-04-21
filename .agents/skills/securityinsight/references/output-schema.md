@@ -72,11 +72,11 @@ Output format:
 
 Recommended interpretation:
 
-- `0 (none)`: no meaningful security concern
-- `1 (low)`: low concern
-- `2 (medium)`: medium concern
-- `3 (high)`: high concern
-- `4 (critical)`: critical concern
+- `0 (none, scale 0-4)`: no meaningful security concern
+- `1 (low, scale 0-4)`: low concern
+- `2 (medium, scale 0-4)`: medium concern
+- `3 (high, scale 0-4)`: high concern
+- `4 (critical, scale 0-4)`: critical concern
 
 ### `Threat Type`
 
@@ -118,7 +118,7 @@ List concrete supporting items.
 Each entry should point to one observed fact from the collected package and use this shape:
 
 ```md
-1. [high] security_event - Outbound request to unknown host
+1. [high] detail_event - Outbound request to unknown host
    Runner output shows a request to `example.invalid` immediately after prompt override.
 ```
 

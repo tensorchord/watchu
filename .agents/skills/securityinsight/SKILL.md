@@ -25,13 +25,15 @@ The threat analysis workflow uses a **two-phase scan/detail** approach. The CLI 
 
 ### Target Selection
 
-Choose a target in this priority order:
+Choose a target in this priority order for `collect threat`:
 
 1. **`--latest`** (preferred) — auto-resolves the most recent agent run. Use this when the user says "latest", "most recent", or gives a relative time phrase like "last 6 hours" without needing a precise window.
 2. **`--root-exec-id="$ID"`** — target a specific run by ID (from a prior scan result).
 3. **`--since` + `--until`** — explicit RFC3339 time window. Only use when the user needs a precise range.
 
-> **Always try `--latest` first.** Only fall back to `--since`/`--until` when the user explicitly requires a specific time window or when `--latest` selects the wrong run.
+> **For `collect threat`, always try `--latest` first.** Only fall back to `--since`/`--until` when the user explicitly requires a specific time window or when `--latest` selects the wrong run.
+
+For `collect prompt`, `--latest` is not available. Use `--root-exec-id="$ID"` when you already know the target run, or `--since` + `--until` for an explicit time window.
 
 When you must convert a relative time phrase to RFC3339:
 
@@ -172,7 +174,7 @@ Escalate to `collect prompt` when **any** of these conditions are met:
 | `file_read` of prompt templates, system instructions, or `.env` files followed by LLM API calls | `detail(file_read)` + `detail(http)` |
 | HTTP requests to LLM APIs with abnormally large request bodies (>10KB) | `detail(http)` |
 | Agent output shows refusal messages followed by compliance (refusal bypass) | Scan runner excerpts |
-| Red flags flagged any `S*_prompt_injection` pattern | Scan red flags |
+| Scan red flags match any `S*_prompt_injection` pattern | Scan red flags |
 
 ```
 collect prompt --input="$JSONL" --root-exec-id="$ROOT_EXEC_ID" --format=prompt
@@ -196,7 +198,7 @@ Return exactly one Markdown verdict matching the report format in `references/ou
 - **You MUST use the `securityinsight` CLI for all evidence collection.**
 - **The CLI applies NO security rules** — all classification, severity, and judgment is your responsibility.
 - The final answer is for a human reading a CLI transcript. Do not emit raw JSON unless the user explicitly asks for machine-readable output.
-- Treat CLI budget notes as truncation metadata, not as evidence gaps.
+- Treat CLI budget notes as data-quality limitations, not direct evidence of compromise. If truncation is significant, re-run with a higher budget or lower confidence in the verdict.
 - Prefer concrete observed behavior over speculation.
 - Treat explicit refusal by the agent as mitigating evidence, not proof of compromise.
 - The two-phase workflow is designed to keep token budgets low. Do **not** use `--focus=all` unless the scan overview is ambiguous and a targeted focus is not possible.
