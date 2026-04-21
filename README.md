@@ -8,7 +8,7 @@ It is designed for people who want a local collector that can capture high-value
 - [x] file operations
 - [x] TLS plaintext HTTP traffic (OpenSSL & BoringSSL)
 - [x] TCP connects
-- [x] Postgres client query
+- [x] Postgres client queries
 - [x] stdio/MCP traffic
 
 ![demo](https://github.com/user-attachments/assets/1a5aeab5-3612-4694-a72a-59c2654f753b)
@@ -18,7 +18,7 @@ It is designed for people who want a local collector that can capture high-value
 Current expected runtime environment:
 
 - Linux `amd64` with kernel version >= 5.8
-- permission to load eBPF programs and attach fentry/uprobe/tracepoints
+- Permissions to load eBPF programs and attach fentry/uprobe/tracepoints
 
 ## Quick Start
 
