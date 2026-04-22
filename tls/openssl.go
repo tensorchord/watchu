@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"runtime"
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
@@ -49,18 +50,25 @@ func attachSSLProbes(ex *link.Executable, objs *sslObjects, target string) ([]li
 	return links, nil
 }
 
-var libSSLCandidates = []string{
-	"/lib/x86_64-linux-gnu/libssl.so.1.1", // Ubuntu/Debian amd64
-	"/lib/x86_64-linux-gnu/libssl.so.3",   // Ubuntu/Debian amd64
-	"/usr/lib/x86_64-linux-gnu/libssl.so.1.1",
-	"/usr/lib/x86_64-linux-gnu/libssl.so.3",
-	"/lib/aarch64-linux-gnu/libssl.so.1.1", // Ubuntu/Debian arm64
-	"/lib/aarch64-linux-gnu/libssl.so.3",
-	"/usr/lib/aarch64-linux-gnu/libssl.so.1.1",
-	"/usr/lib/aarch64-linux-gnu/libssl.so.3",
-	"/lib64/libssl.so.1.1", // RHEL/Fedora
-	"/lib64/libssl.so.3",
-	"/usr/local/lib/libssl.so", // Custom builds
+var libSSLCandidatesByArch = map[string][]string{
+	"amd64": {
+		"/lib/x86_64-linux-gnu/libssl.so.1.1", // Ubuntu/Debian amd64
+		"/lib/x86_64-linux-gnu/libssl.so.3",
+		"/usr/lib/x86_64-linux-gnu/libssl.so.1.1",
+		"/usr/lib/x86_64-linux-gnu/libssl.so.3",
+		"/lib64/libssl.so.1.1", // RHEL/Fedora amd64
+		"/lib64/libssl.so.3",
+		"/usr/local/lib/libssl.so",
+	},
+	"arm64": {
+		"/lib/aarch64-linux-gnu/libssl.so.1.1", // Ubuntu/Debian arm64
+		"/lib/aarch64-linux-gnu/libssl.so.3",
+		"/usr/lib/aarch64-linux-gnu/libssl.so.1.1",
+		"/usr/lib/aarch64-linux-gnu/libssl.so.3",
+		"/lib64/libssl.so.1.1", // RHEL/Fedora arm64
+		"/lib64/libssl.so.3",
+		"/usr/local/lib/libssl.so",
+	},
 }
 
 var libSDirs = []string{
@@ -73,7 +81,7 @@ var libSDirs = []string{
 }
 
 func findLibOpenSSLPath() (string, error) {
-	for _, path := range libSSLCandidates {
+	for _, path := range libSSLCandidatesByArch[runtime.GOARCH] {
 		if ok, err := tool.IsFilePath(path); err == nil && ok {
 			return path, nil
 		}
