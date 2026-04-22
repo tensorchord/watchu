@@ -103,6 +103,45 @@ func TestAppendRecordPreservesSelectionAndViewportOnInsertBefore(t *testing.T) {
 	}
 }
 
+func TestAppendRecordTrimAdjustsSelectionAndViewport(t *testing.T) {
+	t.Parallel()
+
+	records := make([]displayRecord, 0, maxEventsPerTab)
+	base := time.Date(2026, 4, 21, 12, 0, 0, 0, time.UTC)
+	for i := range maxEventsPerTab {
+		records = append(records, displayRecord{
+			Endpoint:  "exec_event",
+			Summary:   "record",
+			Timestamp: base.Add(time.Duration(i) * time.Second),
+		})
+	}
+
+	m := model{
+		recordsByTab: map[string][]displayRecord{
+			allTab: records,
+		},
+		selectedByTab: map[string]int{
+			allTab: 10,
+		},
+		listStartByTab: map[string]int{
+			allTab: 8,
+		},
+	}
+
+	m.appendRecord(allTab, displayRecord{
+		Endpoint:  "http_response",
+		Summary:   "latest",
+		Timestamp: base.Add(time.Duration(maxEventsPerTab) * time.Second),
+	})
+
+	if m.selectedByTab[allTab] != 9 {
+		t.Fatalf("selectedByTab[all] = %d, want 9", m.selectedByTab[allTab])
+	}
+	if m.listStartByTab[allTab] != 7 {
+		t.Fatalf("listStartByTab[all] = %d, want 7", m.listStartByTab[allTab])
+	}
+}
+
 func TestSyncDetailViewportResetsToTop(t *testing.T) {
 	t.Parallel()
 
@@ -243,5 +282,38 @@ func TestRenderListDoesNotExceedBodyHeight(t *testing.T) {
 	rendered := m.renderList(4)
 	if got := lipgloss.Height(rendered); got > 4 {
 		t.Fatalf("renderList height = %d, want <= 4", got)
+	}
+}
+
+func TestRenderListOnlyIncludesVisibleRange(t *testing.T) {
+	t.Parallel()
+
+	records := []displayRecord{
+		{Endpoint: "exec_event", Timestamp: time.Date(2026, 4, 21, 12, 0, 0, 0, time.UTC), Summary: "first"},
+		{Endpoint: "exec_event", Timestamp: time.Date(2026, 4, 21, 12, 0, 1, 0, time.UTC), Summary: "second"},
+		{Endpoint: "exec_event", Timestamp: time.Date(2026, 4, 21, 12, 0, 2, 0, time.UTC), Summary: "third"},
+		{Endpoint: "exec_event", Timestamp: time.Date(2026, 4, 21, 12, 0, 3, 0, time.UTC), Summary: "fourth"},
+		{Endpoint: "exec_event", Timestamp: time.Date(2026, 4, 21, 12, 0, 4, 0, time.UTC), Summary: "fifth"},
+	}
+
+	m := model{
+		width:    60,
+		height:   10,
+		tabIndex: 0,
+		recordsByTab: map[string][]displayRecord{
+			allTab: records,
+		},
+		selectedByTab: map[string]int{
+			allTab: 4,
+		},
+		listStartByTab: make(map[string]int),
+	}
+
+	rendered := m.renderList(4)
+	if strings.Contains(rendered, "first") || strings.Contains(rendered, "second") || strings.Contains(rendered, "third") {
+		t.Fatalf("renderList() included off-screen rows:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "fourth") || !strings.Contains(rendered, "fifth") {
+		t.Fatalf("renderList() did not include expected visible rows:\n%s", rendered)
 	}
 }

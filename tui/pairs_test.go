@@ -67,3 +67,47 @@ func TestBuildAllTabAnnotationsIgnoresOrphanResponse(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildVisiblePairAnnotationsRestrictsToWindow(t *testing.T) {
+	t.Parallel()
+
+	pairs := []pairInterval{
+		{Start: 0, End: 4, Level: 0},
+		{Start: 1, End: 3, Level: 1},
+	}
+
+	got := buildVisiblePairAnnotations(1, 4, pairs, 2)
+
+	if len(got) != 3 {
+		t.Fatalf("annotation count = %d, want 3", len(got))
+	}
+	if len(got[0].Columns) != 2 || got[0].Columns[0] != pairLinkPipe || got[0].Columns[1] != pairLinkDot {
+		t.Fatalf("annotation[0] = %+v, want outer pipe + inner dot", got[0])
+	}
+	if len(got[1].Columns) != 2 || got[1].Columns[0] != pairLinkPipe || got[1].Columns[1] != pairLinkPipe {
+		t.Fatalf("annotation[1] = %+v, want two pipes", got[1])
+	}
+	if len(got[2].Columns) != 2 || got[2].Columns[0] != pairLinkPipe || got[2].Columns[1] != pairLinkDot {
+		t.Fatalf("annotation[2] = %+v, want outer pipe + inner dot", got[2])
+	}
+}
+
+func TestBuildVisiblePairAnnotationsKeepsIndentForRowsOutsidePair(t *testing.T) {
+	t.Parallel()
+
+	pairs := []pairInterval{
+		{Start: 1, End: 2, Level: 0},
+	}
+
+	got := buildVisiblePairAnnotations(0, 4, pairs, 1)
+
+	if len(got) != 4 {
+		t.Fatalf("annotation count = %d, want 4", len(got))
+	}
+	if len(got[0].Columns) != 1 || got[0].Columns[0] != pairLinkNone {
+		t.Fatalf("annotation[0] = %+v, want reserved empty gutter", got[0])
+	}
+	if len(got[3].Columns) != 1 || got[3].Columns[0] != pairLinkNone {
+		t.Fatalf("annotation[3] = %+v, want reserved empty gutter", got[3])
+	}
+}

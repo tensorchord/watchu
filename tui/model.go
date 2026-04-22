@@ -31,11 +31,11 @@ var (
 	footerStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
 	separatorStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 	sessionLinkStyles = []lipgloss.Style{
-		lipgloss.NewStyle().Foreground(lipgloss.CompleteColor{TrueColor: "#86EFAC", ANSI256: "120", ANSI: "2"}),
 		lipgloss.NewStyle().Foreground(lipgloss.CompleteColor{TrueColor: "#A5B4FC", ANSI256: "147", ANSI: "4"}),
+		lipgloss.NewStyle().Foreground(lipgloss.CompleteColor{TrueColor: "#86EFAC", ANSI256: "120", ANSI: "2"}),
+		lipgloss.NewStyle().Foreground(lipgloss.CompleteColor{TrueColor: "#67E8F9", ANSI256: "81", ANSI: "6"}),
 		lipgloss.NewStyle().Foreground(lipgloss.CompleteColor{TrueColor: "#C4B5FD", ANSI256: "183", ANSI: "5"}),
 		lipgloss.NewStyle().Foreground(lipgloss.CompleteColor{TrueColor: "#F9A8D4", ANSI256: "218", ANSI: "5"}),
-		lipgloss.NewStyle().Foreground(lipgloss.CompleteColor{TrueColor: "#67E8F9", ANSI256: "81", ANSI: "6"}),
 	}
 )
 
@@ -67,6 +67,13 @@ type viewLayout struct {
 	bodyHeight int
 }
 
+type sessionPairCache struct {
+	pairs       []pairInterval
+	maxLevel    int
+	recordCount int
+	valid       bool
+}
+
 type model struct {
 	path           string
 	stream         <-chan tea.Msg
@@ -80,6 +87,7 @@ type model struct {
 	eventTimes     []time.Time
 	showDetail     bool
 	detailViewport viewport.Model
+	allTabPairs    sessionPairCache
 	confirmQuit    bool
 	spinnerIndex   int
 	err            error
@@ -180,6 +188,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.appendRecord(allTab, record)
 			m.appendRecord(record.Endpoint, record)
 		}
+		m.refreshAllTabPairCache()
 		m.syncDetailViewport(false)
 		return m, m.waitForStream()
 	case tailErrMsg:
@@ -221,7 +230,7 @@ func (m *model) appendRecord(tab string, record displayRecord) {
 	selected := m.selectedByTab[tab]
 	listStart := m.listStartByTab[tab]
 	insertAt := sort.Search(len(records), func(i int) bool {
-		return !records[i].Timestamp.Before(record.Timestamp)
+		return records[i].Timestamp.After(record.Timestamp)
 	})
 	records = slices.Insert(records, insertAt, record)
 	if len(records) > 1 && insertAt <= selected {
@@ -232,10 +241,10 @@ func (m *model) appendRecord(tab string, record displayRecord) {
 	}
 	m.recordsByTab[tab] = records
 	if len(records) > maxEventsPerTab {
-		m.recordsByTab[tab] = records[len(records)-maxEventsPerTab:]
-		if listStart > 0 {
-			listStart--
-		}
+		dropped := len(records) - maxEventsPerTab
+		m.recordsByTab[tab] = records[dropped:]
+		selected -= dropped
+		listStart -= dropped
 	}
 	if selected >= len(m.recordsByTab[tab]) {
 		selected = len(m.recordsByTab[tab]) - 1
@@ -246,6 +255,9 @@ func (m *model) appendRecord(tab string, record displayRecord) {
 	}
 	m.selectedByTab[tab] = max(0, selected)
 	m.listStartByTab[tab] = max(0, listStart)
+	if tab == allTab {
+		m.allTabPairs.valid = false
+	}
 }
 
 func (m *model) moveSelection(delta int) {
@@ -297,21 +309,25 @@ func (m model) renderList(height int) string {
 	contentWidth := m.panelContentWidth()
 	listViewport := viewport.New(max(1, m.width), max(1, height))
 	listViewport.Style = detailBoxStyle
+	contentHeight := max(1, height-detailBoxStyle.GetVerticalFrameSize())
 	if len(records) == 0 {
 		listViewport.SetContent("starting watchu... waiting for probe attach and first events")
 		return listViewport.View()
 	}
 
 	selected := m.selectedByTab[m.currentTab()]
-	start := m.adjustListStart(len(records), height-detailBoxStyle.GetVerticalFrameSize(), selected)
-	annotations := make([]pairLineAnnotation, len(records))
+	start := m.adjustListStart(len(records), contentHeight, selected)
+	end := min(len(records), start+contentHeight)
+	annotations := make([]pairLineAnnotation, end-start)
 	if m.currentTab() == allTab {
-		annotations = buildAllTabAnnotations(records)
+		pairs, maxLevel := m.allTabSessionPairs()
+		annotations = buildVisiblePairAnnotations(start, end, pairs, maxLevel)
 	}
 
-	lines := make([]string, 0, len(records))
-	for i, record := range records {
-		line := m.renderRecordLine(record, annotations[i], i == selected, contentWidth)
+	lines := make([]string, 0, end-start)
+	for i := start; i < end; i++ {
+		record := records[i]
+		line := m.renderRecordLine(record, annotations[i-start], i == selected, contentWidth)
 		if i == selected {
 			line = selectedStyle.Width(contentWidth).Render(line)
 		}
@@ -319,7 +335,6 @@ func (m model) renderList(height int) string {
 	}
 
 	listViewport.SetContent(strings.Join(lines, "\n"))
-	listViewport.SetYOffset(start)
 	return listViewport.View()
 }
 
@@ -518,6 +533,23 @@ func (m model) currentDetailContent() string {
 
 func (m model) wrappedDetailContent() string {
 	return lipgloss.NewStyle().Width(m.panelContentWidth()).Render(m.currentDetailContent())
+}
+
+func (m *model) refreshAllTabPairCache() {
+	pairs, maxLevel := buildSessionPairs(m.recordsByTab[allTab])
+	m.allTabPairs = sessionPairCache{
+		pairs:       pairs,
+		maxLevel:    maxLevel,
+		recordCount: len(m.recordsByTab[allTab]),
+		valid:       true,
+	}
+}
+
+func (m model) allTabSessionPairs() ([]pairInterval, int) {
+	if m.allTabPairs.valid && m.allTabPairs.recordCount == len(m.recordsByTab[allTab]) {
+		return m.allTabPairs.pairs, m.allTabPairs.maxLevel
+	}
+	return buildSessionPairs(m.recordsByTab[allTab])
 }
 
 func (m model) computeLayout() viewLayout {
