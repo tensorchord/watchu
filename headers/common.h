@@ -164,3 +164,12 @@ struct pt_regs {
 	/* top of stack page */
 };
 #endif /* __TARGET_ARCH_x86 */
+
+#if defined(__TARGET_ARCH_arm64)
+struct user_pt_regs {
+	unsigned long regs[31];
+	unsigned long sp;
+	unsigned long pc;
+	unsigned long pstate;
+};
+#endif /* __TARGET_ARCH_arm64 */

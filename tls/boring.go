@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"runtime"
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
@@ -14,8 +15,11 @@ import (
 )
 
 var (
-	// The current bun BoringSSL SSL_read/SSL_write function bytes.
-	// This may change in the future if bun updates the BoringSSL code.
+	// The current bun BoringSSL SSL_read/SSL_write function bytes for amd64.
+	// This matcher is architecture-specific and will change if bun updates its
+	// bundled BoringSSL code.
+	//
+	// TODO: arm64 cannot rely on raw instruction-byte pattern matching here.
 	BoringSSLReadPattern = []byte{
 		0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56,
 		0x53, 0x50, 0x48, 0x83, 0xbf, 0x98, 0x00, 0x00,
@@ -28,7 +32,8 @@ var (
 	}
 
 	// errors
-	errUprobeNotFound = errors.New("cannot find the pattern")
+	errUprobeNotFound        = errors.New("cannot find the pattern")
+	errUprobeArchUnsupported = errors.New("BoringSSL byte-pattern probe matching is only implemented for amd64")
 )
 
 type BoringSSLProbe struct {
@@ -130,6 +135,13 @@ func attachBoringProbes(ex *link.Executable, objs *boringObjects, target string)
 }
 
 func searchUprobeAddresses(path string) (read int, write int, err error) {
+	if runtime.GOARCH != "amd64" {
+		// TODO: arm64 needs symbol-aware resolution instead of x86 instruction
+		// byte matching before BoringSSL probes can be attached reliably.
+		err = fmt.Errorf("%s on %s: %w", path, runtime.GOARCH, errUprobeArchUnsupported)
+		return
+	}
+
 	file, err := os.Open(path)
 	if err != nil {
 		return

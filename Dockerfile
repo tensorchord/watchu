@@ -1,5 +1,4 @@
-# this is only for amd64
-FROM ghcr.io/tensorchord/ebpf-builder:0.1.2 AS builder
+FROM ghcr.io/tensorchord/ebpf-builder:0.2.0 AS builder
 
 WORKDIR /workspace
 COPY . .

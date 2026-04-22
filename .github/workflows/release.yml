@@ -9,11 +9,45 @@ on:
         type: string
 
 jobs:
-  release:
+  prepare:
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch'
     permissions:
+      contents: read
+    outputs:
+      image: ghcr.io/${{ github.repository_owner }}/watchu
+      version: ${{ steps.meta.outputs.version }}
+      labels: ${{ steps.meta.outputs.labels }}
+    steps:
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: |
+            ghcr.io/${{ github.repository_owner }}/watchu
+          flavor: |
+            latest=false
+          tags: |
+            type=semver,pattern={{version}},value=${{ inputs.version }}
+
+  build:
+    name: Build & Push (${{ matrix.platform }})
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    if: github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: read
       packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            platform: linux/amd64
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            arch: arm64
     steps:
       - uses: actions/checkout@v6
 
@@ -27,26 +61,52 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Docker meta
-        id: meta
-        uses: docker/metadata-action@v6
-        with:
-          images: |
-            ghcr.io/${{ github.repository_owner }}/watchu
-          flavor: |
-            latest=false
-          tags: |
-            type=semver,pattern={{version}},value=${{ inputs.version }}
-
-      - name: Build and push images
+      - name: Build and push image
         uses: docker/build-push-action@v7
         with:
-          platforms: linux/amd64
-          labels: ${{ steps.meta.outputs.labels }}
-          tags: ${{ steps.meta.outputs.tags }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          push: true
-          provenance: false # avoid push manifest-list
-          file: Dockerfile
           context: .
+          file: Dockerfile
+          platforms: ${{ matrix.platform }}
+          labels: ${{ needs.prepare.outputs.labels }}
+          tags: ${{ needs.prepare.outputs.image }}:${{ needs.prepare.outputs.version }}-${{ matrix.arch }}
+          cache-from: type=gha,scope=release-${{ matrix.arch }}
+          cache-to: type=gha,scope=release-${{ matrix.arch }},mode=max
+          push: true
+          provenance: false
+
+  merge:
+    name: Merge Multi-Arch Image
+    needs:
+      - prepare
+      - build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Login to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create multi-arch manifest
+        env:
+          IMAGE: ${{ needs.prepare.outputs.image }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          docker buildx imagetools create \
+            --tag "${IMAGE}:${VERSION}" \
+            "${IMAGE}:${VERSION}-amd64" \
+            "${IMAGE}:${VERSION}-arm64"
+
+      - name: Inspect merged image
+        env:
+          IMAGE: ${{ needs.prepare.outputs.image }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: docker buildx imagetools inspect "${IMAGE}:${VERSION}"

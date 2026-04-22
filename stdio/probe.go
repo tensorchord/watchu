@@ -1,4 +1,4 @@
-//go:build amd64 && linux
+//go:build linux && (amd64 || arm64)
 
 package stdio
 
@@ -19,7 +19,7 @@ import (
 	"github.com/tensorchord/watchu/internal/tool"
 )
 
-//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -tags linux -target amd64 stdio stdio.bpf.c -- -I../headers
+//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -tags linux -target amd64,arm64 stdio stdio.bpf.c -- -I../headers
 
 const (
 	stdioRead  = 4

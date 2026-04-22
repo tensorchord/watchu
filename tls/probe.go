@@ -1,4 +1,4 @@
-//go:build amd64 && linux
+//go:build linux && (amd64 || arm64)
 
 package tls
 
@@ -18,8 +18,8 @@ import (
 	"github.com/tensorchord/watchu/internal/tool"
 )
 
-//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -tags linux -target amd64 ssl ssl.bpf.c -- -I../headers
-//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -tags linux -target amd64 boring boring.bpf.c -- -I../headers
+//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -tags linux -target amd64,arm64 ssl ssl.bpf.c -- -I../headers
+//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -tags linux -target amd64,arm64 boring boring.bpf.c -- -I../headers
 
 type TLSPlaintextProbe interface {
 	ReadBuffer(*ringbuf.Record) error
