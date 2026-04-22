@@ -27,11 +27,11 @@ type bunStandaloneOffsets struct {
 }
 
 func isBunBundlePackage(path string) (bool, error) {
-	ok, err := isBunBundleELF(path)
-	if err == nil && ok {
+	if ok, err := isBunBundleELF(path); err != nil {
+		return false, err
+	} else if ok {
 		return true, nil
 	}
-
 	return isBunBundleLegacyFooter(path)
 }
 
