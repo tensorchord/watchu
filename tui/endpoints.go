@@ -43,7 +43,10 @@ var endpointDefinitions = map[string]endpointDefinition{
 		TransformDetail: rewriteHTTPBodyForDisplay,
 	},
 	"http_response": {
-		Style:           lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(lipgloss.Color("6")).Padding(0, 1),
+		Style: lipgloss.NewStyle().
+			Foreground(lipgloss.CompleteColor{TrueColor: "#082F49", ANSI256: "17", ANSI: "0"}).
+			Background(lipgloss.CompleteColor{TrueColor: "#67E8F9", ANSI256: "81", ANSI: "6"}).
+			Padding(0, 1),
 		Summarize:       summarizeHTTPResponse,
 		TransformDetail: rewriteHTTPBodyForDisplay,
 	},
@@ -56,7 +59,10 @@ var endpointDefinitions = map[string]endpointDefinition{
 		Summarize: summarizePostgres,
 	},
 	"file_op": {
-		Style:     lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(lipgloss.Color("11")).Padding(0, 1),
+		Style: lipgloss.NewStyle().
+			Foreground(lipgloss.CompleteColor{TrueColor: "#431407", ANSI256: "52", ANSI: "0"}).
+			Background(lipgloss.CompleteColor{TrueColor: "#FB923C", ANSI256: "209", ANSI: "3"}).
+			Padding(0, 1),
 		Summarize: summarizeFileOp,
 	},
 	"tcp_connect": {
