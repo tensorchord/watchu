@@ -11,7 +11,8 @@ func TestBuildAllTabAnnotationsSimplePair(t *testing.T) {
 		{Endpoint: "http_response", SessionKey: "s1"},
 	}
 
-	got := buildAllTabAnnotations(records)
+	pairs, maxLevel := buildSessionPairs(records)
+	got := buildVisiblePairAnnotations(0, len(records), pairs, maxLevel)
 
 	if len(got) != len(records) {
 		t.Fatalf("annotation count = %d, want %d", len(got), len(records))
@@ -38,7 +39,8 @@ func TestBuildAllTabAnnotationsNestedPairs(t *testing.T) {
 		{Endpoint: "http_response", SessionKey: "outer"},
 	}
 
-	got := buildAllTabAnnotations(records)
+	pairs, maxLevel := buildSessionPairs(records)
+	got := buildVisiblePairAnnotations(0, len(records), pairs, maxLevel)
 
 	if len(got[1].Columns) != 2 || got[1].Columns[0] != pairLinkPipe || got[1].Columns[1] != pairLinkDot {
 		t.Fatalf("inner request annotation = %+v, want outer pipe + inner dot", got[1])
@@ -59,7 +61,8 @@ func TestBuildAllTabAnnotationsIgnoresOrphanResponse(t *testing.T) {
 		{Endpoint: "exec_event"},
 	}
 
-	got := buildAllTabAnnotations(records)
+	pairs, maxLevel := buildSessionPairs(records)
+	got := buildVisiblePairAnnotations(0, len(records), pairs, maxLevel)
 
 	for idx, annotation := range got {
 		if len(annotation.Columns) != 0 {

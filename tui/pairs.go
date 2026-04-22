@@ -20,33 +20,6 @@ type pairLineAnnotation struct {
 	Columns []pairLinkKind
 }
 
-func buildAllTabAnnotations(records []displayRecord) []pairLineAnnotation {
-	annotations := make([]pairLineAnnotation, len(records))
-	pairs, maxLevel := buildSessionPairs(records)
-	if len(pairs) == 0 || maxLevel == 0 {
-		return annotations
-	}
-
-	for idx := range records {
-		line := pairLineAnnotation{
-			Columns: make([]pairLinkKind, maxLevel),
-		}
-		for _, pair := range pairs {
-			if idx < pair.Start || idx > pair.End {
-				continue
-			}
-			if pair.Start < idx && idx < pair.End {
-				line.Columns[pair.Level] = pairLinkPipe
-				continue
-			}
-			line.Columns[pair.Level] = pairLinkDot
-		}
-		annotations[idx] = line
-	}
-
-	return annotations
-}
-
 func buildVisiblePairAnnotations(start, end int, pairs []pairInterval, maxLevel int) []pairLineAnnotation {
 	annotations := make([]pairLineAnnotation, max(0, end-start))
 	if len(pairs) == 0 || maxLevel == 0 || end <= start {

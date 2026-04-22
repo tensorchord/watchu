@@ -150,9 +150,6 @@ func TestSyncDetailViewportResetsToTop(t *testing.T) {
 		height:     20,
 		showDetail: true,
 		tabIndex:   0,
-		detailViewport: viewport.Model{
-			YOffset: 8,
-		},
 		recordsByTab: map[string][]displayRecord{
 			allTab: {
 				{Endpoint: "exec_event", Timestamp: time.Date(2026, 4, 21, 12, 0, 0, 0, time.UTC), Detail: "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10"},
@@ -163,6 +160,8 @@ func TestSyncDetailViewportResetsToTop(t *testing.T) {
 		},
 		listStartByTab: make(map[string]int),
 	}
+	m.detailViewport = viewport.New(0, 0)
+	m.detailViewport.YOffset = 8
 
 	m.syncDetailViewport(true)
 
