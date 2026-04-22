@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -58,6 +59,14 @@ type displayRecord struct {
 	Detail     string
 }
 
+type viewLayout struct {
+	header     string
+	divider    string
+	tabs       string
+	footer     string
+	bodyHeight int
+}
+
 type model struct {
 	path           string
 	stream         <-chan tea.Msg
@@ -70,7 +79,7 @@ type model struct {
 	totalEvents    int
 	eventTimes     []time.Time
 	showDetail     bool
-	detailScroll   int
+	detailViewport viewport.Model
 	confirmQuit    bool
 	spinnerIndex   int
 	err            error
@@ -84,7 +93,9 @@ func Run(ctx context.Context, path string) error {
 		recordsByTab:   make(map[string][]displayRecord),
 		selectedByTab:  make(map[string]int),
 		listStartByTab: make(map[string]int),
+		detailViewport: viewport.New(0, 0),
 	}
+	m.detailViewport.Style = detailBoxStyle
 
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithContext(ctx))
 	go streamFile(ctx, path, streamMessages)
@@ -104,6 +115,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.syncDetailViewport(false)
 	case tea.KeyMsg:
 		if m.confirmQuit {
 			switch msg.String() {
@@ -122,39 +134,37 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "tab", "l":
 			m.tabIndex = (m.tabIndex + 1) % len(tabOrder)
 			m.showDetail = false
-			m.detailScroll = 0
+			m.syncDetailViewport(true)
 		case "shift+tab", "h":
 			m.tabIndex = (m.tabIndex - 1 + len(tabOrder)) % len(tabOrder)
 			m.showDetail = false
-			m.detailScroll = 0
+			m.syncDetailViewport(true)
 		case "j", "down":
 			if m.showDetail {
-				m.scrollDetail(1)
+				m.detailViewport.ScrollDown(1)
 				break
 			}
 			m.moveSelection(1)
 		case "k", "up":
 			if m.showDetail {
-				m.scrollDetail(-1)
+				m.detailViewport.ScrollUp(1)
 				break
 			}
 			m.moveSelection(-1)
 		case "G", "end":
 			if m.showDetail {
-				m.scrollDetailToBottom()
+				m.detailViewport.GotoBottom()
 				break
 			}
 			m.moveSelectionToBottom()
 		case "g", "home":
 			if m.showDetail {
-				m.detailScroll = 0
+				m.detailViewport.GotoTop()
 			}
 		case "v", "enter":
 			if len(m.currentRecords()) > 0 {
 				m.showDetail = !m.showDetail
-				if m.showDetail {
-					m.detailScroll = 0
-				}
+				m.syncDetailViewport(true)
 			}
 		}
 	case spinnerTickMsg:
@@ -170,6 +180,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.appendRecord(allTab, record)
 			m.appendRecord(record.Endpoint, record)
 		}
+		m.syncDetailViewport(false)
 		return m, m.waitForStream()
 	case tailErrMsg:
 		m.err = msg.err
@@ -185,24 +196,19 @@ func (m model) View() string {
 		return "loading TUI..."
 	}
 
-	bodyHeight := max(6, m.height-7)
-	listHeight := bodyHeight
-	detail := ""
-	if m.showDetail {
-		listHeight = bodyHeight / 2
-		detail = m.renderDetail(bodyHeight - listHeight)
-	}
+	layout := m.computeLayout()
 
 	parts := []string{
-		m.renderHeader(),
-		m.renderDivider(),
-		m.renderTabs(),
-		m.renderList(listHeight),
+		layout.header,
+		layout.divider,
+		layout.tabs,
 	}
-	if detail != "" {
-		parts = append(parts, detail)
+	if m.showDetail {
+		parts = append(parts, m.renderDetail(layout.bodyHeight))
+	} else {
+		parts = append(parts, m.renderList(layout.bodyHeight))
 	}
-	parts = append(parts, m.renderDivider(), m.renderFooter())
+	parts = append(parts, layout.divider, layout.footer)
 
 	if m.confirmQuit {
 		return m.renderQuitConfirm()
@@ -212,20 +218,34 @@ func (m model) View() string {
 
 func (m *model) appendRecord(tab string, record displayRecord) {
 	records := m.recordsByTab[tab]
+	selected := m.selectedByTab[tab]
+	listStart := m.listStartByTab[tab]
 	insertAt := sort.Search(len(records), func(i int) bool {
 		return !records[i].Timestamp.Before(record.Timestamp)
 	})
 	records = slices.Insert(records, insertAt, record)
+	if len(records) > 1 && insertAt <= selected {
+		selected++
+	}
+	if len(records) > 1 && insertAt <= listStart {
+		listStart++
+	}
 	m.recordsByTab[tab] = records
 	if len(records) > maxEventsPerTab {
 		m.recordsByTab[tab] = records[len(records)-maxEventsPerTab:]
-		if m.listStartByTab[tab] > 0 {
-			m.listStartByTab[tab]--
+		if listStart > 0 {
+			listStart--
 		}
 	}
-	if m.selectedByTab[tab] >= len(m.recordsByTab[tab]) {
-		m.selectedByTab[tab] = len(m.recordsByTab[tab]) - 1
+	if selected >= len(m.recordsByTab[tab]) {
+		selected = len(m.recordsByTab[tab]) - 1
 	}
+	maxStart := max(0, len(m.recordsByTab[tab])-1)
+	if listStart > maxStart {
+		listStart = maxStart
+	}
+	m.selectedByTab[tab] = max(0, selected)
+	m.listStartByTab[tab] = max(0, listStart)
 }
 
 func (m *model) moveSelection(delta int) {
@@ -239,7 +259,7 @@ func (m *model) moveSelection(delta int) {
 		next = len(records) - 1
 	}
 	m.selectedByTab[tab] = next
-	m.detailScroll = 0
+	m.syncDetailViewport(true)
 }
 
 func (m *model) moveSelectionToBottom() {
@@ -248,7 +268,7 @@ func (m *model) moveSelectionToBottom() {
 		return
 	}
 	m.selectedByTab[m.currentTab()] = len(records) - 1
-	m.detailScroll = 0
+	m.syncDetailViewport(true)
 }
 
 func (m model) currentTab() string {
@@ -274,29 +294,33 @@ func (m model) renderTabs() string {
 
 func (m model) renderList(height int) string {
 	records := m.currentRecords()
+	contentWidth := m.panelContentWidth()
+	listViewport := viewport.New(max(1, m.width), max(1, height))
+	listViewport.Style = detailBoxStyle
 	if len(records) == 0 {
-		return detailBoxStyle.Width(max(1, m.width-2)).Height(height).Render("starting watchu... waiting for probe attach and first events")
+		listViewport.SetContent("starting watchu... waiting for probe attach and first events")
+		return listViewport.View()
 	}
 
 	selected := m.selectedByTab[m.currentTab()]
-	start := m.adjustListStart(len(records), height, selected)
-	end := min(len(records), start+height)
+	start := m.adjustListStart(len(records), height-detailBoxStyle.GetVerticalFrameSize(), selected)
 	annotations := make([]pairLineAnnotation, len(records))
 	if m.currentTab() == allTab {
 		annotations = buildAllTabAnnotations(records)
 	}
 
-	lines := make([]string, 0, end-start)
-	for i := start; i < end; i++ {
-		record := records[i]
-		line := m.renderRecordLine(record, annotations[i], i == selected)
+	lines := make([]string, 0, len(records))
+	for i, record := range records {
+		line := m.renderRecordLine(record, annotations[i], i == selected, contentWidth)
 		if i == selected {
-			line = selectedStyle.Width(max(0, m.width-4)).Render(line)
+			line = selectedStyle.Width(contentWidth).Render(line)
 		}
 		lines = append(lines, line)
 	}
 
-	return detailBoxStyle.Width(max(1, m.width-2)).Height(height).Render(strings.Join(lines, "\n"))
+	listViewport.SetContent(strings.Join(lines, "\n"))
+	listViewport.SetYOffset(start)
+	return listViewport.View()
 }
 
 func (m model) renderHeader() string {
@@ -337,7 +361,7 @@ func (m model) renderQuitConfirm() string {
 	)
 }
 
-func (m model) renderRecordLine(record displayRecord, annotation pairLineAnnotation, selected bool) string {
+func (m model) renderRecordLine(record displayRecord, annotation pairLineAnnotation, selected bool, contentWidth int) string {
 	style := endpointDefinitionFor(record.Endpoint).Style
 	ts := record.Timestamp.Format("15:04:05")
 	label := style.Render(record.Endpoint)
@@ -347,7 +371,7 @@ func (m model) renderRecordLine(record displayRecord, annotation pairLineAnnotat
 	}
 	link := renderPairLink(annotation)
 	prefix := lipgloss.JoinHorizontal(lipgloss.Left, cursor, ts+" ", link, label, " ")
-	summaryWidth := max(0, m.width-4-lipgloss.Width(prefix))
+	summaryWidth := max(0, contentWidth-lipgloss.Width(prefix))
 	return lipgloss.JoinHorizontal(lipgloss.Left, prefix, truncateText(record.Summary, summaryWidth))
 }
 
@@ -385,17 +409,18 @@ func (m model) waitForStream() tea.Cmd {
 }
 
 func (m model) renderDetail(height int) string {
-	records := m.currentRecords()
-	if len(records) == 0 {
+	if !m.showDetail {
 		return ""
 	}
-	record := records[m.selectedByTab[m.currentTab()]]
-	title := titleStyle.Render(fmt.Sprintf("%s  %s", record.Endpoint, record.Timestamp.Format(time.RFC3339)))
-	detail := normalizedDetail(record.Detail)
-	bodyHeight := max(0, height-2)
-	body := clampLines(detail, m.detailScroll, bodyHeight)
-	box := detailBoxStyle.Width(max(1, m.width-2)).Height(height).Render(title + "\n" + body)
-	return box
+	vp := m.detailViewport
+	vp.Width = max(1, m.width)
+	vp.Height = max(1, height)
+	vp.Style = detailBoxStyle
+	return vp.View()
+}
+
+func (m model) panelContentWidth() int {
+	return max(1, m.width-detailBoxStyle.GetHorizontalFrameSize())
 }
 
 func (m *model) adjustListStart(total, height, selected int) int {
@@ -427,35 +452,15 @@ func (m *model) adjustListStart(total, height, selected int) int {
 	return start
 }
 
-func (m *model) scrollDetail(delta int) {
-	maxScroll := m.maxDetailScroll()
-	next := m.detailScroll + delta
-	if next < 0 {
-		next = 0
+func (m *model) syncDetailViewport(resetScroll bool) {
+	layout := m.computeLayout()
+	m.detailViewport.Width = max(1, m.width)
+	m.detailViewport.Height = max(1, layout.bodyHeight)
+	m.detailViewport.Style = detailBoxStyle
+	m.detailViewport.SetContent(m.wrappedDetailContent())
+	if resetScroll {
+		m.detailViewport.GotoTop()
 	}
-	if next > maxScroll {
-		next = maxScroll
-	}
-	m.detailScroll = next
-}
-
-func (m *model) scrollDetailToBottom() {
-	m.detailScroll = m.maxDetailScroll()
-}
-
-func (m model) maxDetailScroll() int {
-	if !m.showDetail || len(m.currentRecords()) == 0 || m.height == 0 {
-		return 0
-	}
-
-	bodyHeight := max(6, m.height-7)
-	detailHeight := bodyHeight - bodyHeight/2
-	availableLines := max(0, detailHeight-2)
-	lines := strings.Split(normalizedDetail(m.currentRecords()[m.selectedByTab[m.currentTab()]].Detail), "\n")
-	if len(lines) <= availableLines {
-		return 0
-	}
-	return len(lines) - availableLines
 }
 
 func (m model) eventsPerSecond() float64 {
@@ -479,23 +484,6 @@ func tickSpinner() tea.Cmd {
 	})
 }
 
-func clampLines(s string, offset int, height int) string {
-	if height <= 0 {
-		return ""
-	}
-	lines := strings.Split(s, "\n")
-	if offset < 0 {
-		offset = 0
-	}
-	if offset >= len(lines) {
-		return ""
-	}
-	if len(lines)-offset <= height {
-		return strings.Join(lines[offset:], "\n")
-	}
-	return strings.Join(lines[offset:offset+height], "\n")
-}
-
 func truncateText(s string, width int) string {
 	if width <= 0 {
 		return ""
@@ -516,4 +504,38 @@ func normalizedDetail(detail string) string {
 		return "{}"
 	}
 	return detail
+}
+
+func (m model) currentDetailContent() string {
+	records := m.currentRecords()
+	if len(records) == 0 {
+		return ""
+	}
+	record := records[m.selectedByTab[m.currentTab()]]
+	title := titleStyle.Render(fmt.Sprintf("%s  %s", record.Endpoint, record.Timestamp.Format(time.RFC3339)))
+	return title + "\n" + normalizedDetail(record.Detail)
+}
+
+func (m model) wrappedDetailContent() string {
+	return lipgloss.NewStyle().Width(m.panelContentWidth()).Render(m.currentDetailContent())
+}
+
+func (m model) computeLayout() viewLayout {
+	layout := viewLayout{
+		header:  m.renderHeader(),
+		divider: m.renderDivider(),
+		tabs:    m.renderTabs(),
+		footer:  m.renderFooter(),
+	}
+	if m.height <= 0 {
+		layout.bodyHeight = 1
+		return layout
+	}
+	chromeHeight := lipgloss.Height(layout.header) +
+		lipgloss.Height(layout.divider) +
+		lipgloss.Height(layout.tabs) +
+		lipgloss.Height(layout.divider) +
+		lipgloss.Height(layout.footer)
+	layout.bodyHeight = max(1, m.height-chromeHeight)
+	return layout
 }
