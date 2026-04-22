@@ -27,7 +27,14 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    name: Build & Test (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - ubuntu-latest
+          - ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     container:
       image: ghcr.io/tensorchord/ebpf-builder:0.2.0
     steps:

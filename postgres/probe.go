@@ -1,4 +1,4 @@
-//go:build amd64 && linux
+//go:build linux && (amd64 || arm64)
 
 package postgres
 
@@ -17,7 +17,7 @@ import (
 	"github.com/tensorchord/watchu/internal/tool"
 )
 
-//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -tags linux -target amd64 pg pg.bpf.c -- -I../headers
+//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -tags linux -target amd64,arm64 pg pg.bpf.c -- -I../headers
 
 func attachPostgresProbes(objs pgObjects, links *[]link.Link) {
 	probes := []struct {

@@ -50,11 +50,17 @@ func attachSSLProbes(ex *link.Executable, objs *sslObjects, target string) ([]li
 }
 
 var libSSLCandidates = []string{
-	"/lib/x86_64-linux-gnu/libssl.so.1.1", // Ubuntu/Debian
-	"/lib/x86_64-linux-gnu/libssl.so.3",   // Newer Ubuntu/Debian
-	"/lib64/libssl.so.1.1",                // CentOS/RHEL
-	"/lib64/libssl.so.3",                  // Fedora or newer CentOS/RHEL
-	"/usr/local/lib/libssl.so",            // Custom builds
+	"/lib/x86_64-linux-gnu/libssl.so.1.1", // Ubuntu/Debian amd64
+	"/lib/x86_64-linux-gnu/libssl.so.3",   // Ubuntu/Debian amd64
+	"/usr/lib/x86_64-linux-gnu/libssl.so.1.1",
+	"/usr/lib/x86_64-linux-gnu/libssl.so.3",
+	"/lib/aarch64-linux-gnu/libssl.so.1.1", // Ubuntu/Debian arm64
+	"/lib/aarch64-linux-gnu/libssl.so.3",
+	"/usr/lib/aarch64-linux-gnu/libssl.so.1.1",
+	"/usr/lib/aarch64-linux-gnu/libssl.so.3",
+	"/lib64/libssl.so.1.1", // RHEL/Fedora
+	"/lib64/libssl.so.3",
+	"/usr/local/lib/libssl.so", // Custom builds
 }
 
 var libSDirs = []string{
