@@ -4,6 +4,7 @@ import (
 	"bytes"
 	debugelf "debug/elf"
 	"encoding/binary"
+	"io"
 	"os"
 )
 
@@ -15,16 +16,26 @@ var (
 	bunFooterSize   = bunFooterNumSize + bunSentinelSize
 )
 
+type bunStandaloneOffsets struct {
+	ByteCount          uint64
+	ModulesPtrData     uint64
+	ModulesPtrLen      uint64
+	EntryPointID       uint32
+	CompileArgvPtrData uint64
+	CompileArgvPtrLen  uint64
+	Flags              uint32
+}
+
 func isBunBundlePackage(path string) (bool, error) {
 	ok, err := isBunBundleELF(path)
-	if err == nil {
-		return ok, nil
+	if err == nil && ok {
+		return true, nil
 	}
 
 	return isBunBundleLegacyFooter(path)
 }
 
-// changed to this since the following comit:
+// changed to this since the following commit:
 // https://github.com/oven-sh/bun/commit/66f7c41412e8a41c9686b0f4524b778a5f69b40e
 func isBunBundleELF(path string) (bool, error) {
 	file, err := debugelf.Open(path)
@@ -38,26 +49,35 @@ func isBunBundleELF(path string) (bool, error) {
 		return false, nil
 	}
 
-	data, err := section.Data()
-	if err != nil {
-		return false, err
-	}
-	return isBunBundlePayload(data), nil
+	return isBunBundleSection(section.Open(), section.Size)
 }
 
-func isBunBundlePayload(data []byte) bool {
-	if len(data) < bunFooterNumSize {
-		return false
+func isBunBundleSection(r io.ReadSeeker, sectionSize uint64) (bool, error) {
+	minPayloadLen := uint64(binary.Size(bunStandaloneOffsets{})) + uint64(bunSentinelSize)
+	if sectionSize < bunFooterNumSize+minPayloadLen {
+		return false, nil
 	}
 
-	payloadLen := binary.LittleEndian.Uint64(data[:bunFooterNumSize])
-	if payloadLen < uint64(bunFooterSize) || payloadLen > uint64(len(data)-bunFooterNumSize) {
-		return false
+	var payloadLenBuf [bunFooterNumSize]byte
+	if _, err := io.ReadFull(r, payloadLenBuf[:]); err != nil {
+		return false, err
+	}
+	payloadLen := binary.LittleEndian.Uint64(payloadLenBuf[:])
+	if payloadLen < minPayloadLen || payloadLen > sectionSize-bunFooterNumSize {
+		return false, nil
 	}
 
-	payload := data[bunFooterNumSize : bunFooterNumSize+int(payloadLen)]
-	footerStart := len(payload) - bunFooterSize
-	return bytes.Equal(bunSentinel, payload[footerStart:footerStart+bunSentinelSize])
+	footerOffset := int64(bunFooterNumSize + payloadLen - uint64(bunSentinelSize))
+	if _, err := r.Seek(footerOffset, io.SeekStart); err != nil {
+		return false, err
+	}
+
+	footer := make([]byte, bunSentinelSize)
+	if _, err := io.ReadFull(r, footer); err != nil {
+		return false, err
+	}
+
+	return bytes.Equal(bunSentinel, footer), nil
 }
 
 func isBunBundleLegacyFooter(path string) (bool, error) {
