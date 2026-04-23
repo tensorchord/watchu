@@ -21,7 +21,7 @@ It is designed for people who want a local collector that can capture high-value
 - [x] Postgres client queries
 - [x] stdio/MCP traffic
 
-![demo](https://github.com/user-attachments/assets/1a5aeab5-3612-4694-a72a-59c2654f753b)
+![demo](https://github.com/user-attachments/assets/e01eb6c7-bb66-4c95-be64-90161599091b)
 
 ## Requirements
 
