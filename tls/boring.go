@@ -5,35 +5,19 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"runtime"
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/ringbuf"
 	"github.com/phuslu/log"
 	"golang.org/x/sys/unix"
+
+	"github.com/tensorchord/watchu/internal/arch"
 )
 
 var (
-	// The current bun BoringSSL SSL_read/SSL_write function bytes for amd64.
-	// This matcher is architecture-specific and will change if bun updates its
-	// bundled BoringSSL code.
-	//
-	// TODO: arm64 cannot rely on raw instruction-byte pattern matching here.
-	BoringSSLReadPattern = []byte{
-		0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56,
-		0x53, 0x50, 0x48, 0x83, 0xbf, 0x98, 0x00, 0x00,
-	}
-	BoringSSLWritePattern = []byte{
-		0x55, 0x48, 0x89, 0xe5, 0x41, 0x57, 0x41, 0x56,
-		0x41, 0x55, 0x41, 0x54, 0x53, 0x48, 0x83, 0xec,
-		0x18, 0x41, 0x89, 0xd7, 0x49, 0x89, 0xf6, 0x48,
-		0x89, 0xfb, 0x48, 0x8b, 0x47, 0x30, 0xc7, 0x80,
-	}
-
 	// errors
-	errUprobeNotFound        = errors.New("cannot find the pattern")
-	errUprobeArchUnsupported = errors.New("BoringSSL byte-pattern probe matching is only implemented for amd64")
+	errUprobeNotFound = errors.New("cannot find the pattern")
 )
 
 type BoringSSLProbe struct {
@@ -135,13 +119,6 @@ func attachBoringProbes(ex *link.Executable, objs *boringObjects, target string)
 }
 
 func searchUprobeAddresses(path string) (read int, write int, err error) {
-	if runtime.GOARCH != "amd64" {
-		// TODO: arm64 needs symbol-aware resolution instead of x86 instruction
-		// byte matching before BoringSSL probes can be attached reliably.
-		err = fmt.Errorf("%s on %s: %w", path, runtime.GOARCH, errUprobeArchUnsupported)
-		return
-	}
-
 	file, err := os.Open(path)
 	if err != nil {
 		return
@@ -163,8 +140,8 @@ func searchUprobeAddresses(path string) (read int, write int, err error) {
 		}
 	}()
 
-	read = bytes.Index(buf, BoringSSLReadPattern)
-	write = bytes.Index(buf, BoringSSLWritePattern)
+	read = bytes.Index(buf, arch.BoringSSLReadPattern)
+	write = bytes.Index(buf, arch.BoringSSLWritePattern)
 	if read < 0 || write < 0 {
 		err = fmt.Errorf("failed to find read(%d) write(%d): %w", read, write, errUprobeNotFound)
 	}
