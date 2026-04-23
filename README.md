@@ -27,7 +27,7 @@ It is designed for people who want a local collector that can capture high-value
 
 Current expected runtime environment:
 
-- Linux `amd64` || `arm64` with kernel version >= 5.8
+- Linux `amd64` or `arm64` with kernel version >= 5.8
 - Permissions to load eBPF programs and attach fentry/uprobe/tracepoints
 
 ## Quick Start
