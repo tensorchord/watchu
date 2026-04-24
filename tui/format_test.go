@@ -99,6 +99,28 @@ func TestParseJSONLRecordTreatsLocalhostAsLocalProvider(t *testing.T) {
 	}
 }
 
+func TestParseJSONLRecordKeepsModelForUnknownProvider(t *testing.T) {
+	t.Parallel()
+
+	body := base64.StdEncoding.EncodeToString([]byte(`{"model":"my-self-hosted-model","prompt":"hi"}`))
+	record, err := parseJSONLRecord([]byte(`{
+		"endpoint":"http_request",
+		"timestamp":"2026-04-21T12:00:05Z",
+		"event":{
+			"timestamp":"2026-04-21T12:00:01Z",
+			"method":"POST",
+			"url":"https://llm.internal.example/v1/generate",
+			"body":"` + body + `"
+		}
+	}`))
+	if err != nil {
+		t.Fatalf("parseJSONLRecord() error = %v", err)
+	}
+	if record.Provider != "" || record.Model != "my-self-hosted-model" {
+		t.Fatalf("provider/model = (%q, %q), want (%q, %q)", record.Provider, record.Model, "", "my-self-hosted-model")
+	}
+}
+
 func TestAppendRecordKeepsRecordsSortedByTimestamp(t *testing.T) {
 	t.Parallel()
 

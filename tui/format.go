@@ -110,7 +110,7 @@ func httpProviderModel(endpoint string, event map[string]any) (string, string) {
 	if model == "" && provider == "gemini" {
 		model = geminiModelFromURL(urlString)
 	}
-	if provider == "" || model == "" {
+	if model == "" {
 		return "", ""
 	}
 	return provider, model
@@ -143,17 +143,17 @@ func providerFromURL(raw string) string {
 	switch {
 	case host == "localhost" || host == "127.0.0.1" || host == "::1":
 		return "local"
-	case strings.Contains(host, "openai.com"):
+	case host == "openai.com" || strings.HasSuffix(host, ".openai.com"):
 		return "openai"
-	case strings.Contains(host, "anthropic.com"):
+	case host == "anthropic.com" || strings.HasSuffix(host, ".anthropic.com"):
 		return "anthropic"
-	case strings.Contains(host, "groq.com"):
+	case host == "groq.com" || strings.HasSuffix(host, ".groq.com"):
 		return "groq"
-	case strings.Contains(host, "mistral.ai"):
+	case host == "mistral.ai" || strings.HasSuffix(host, ".mistral.ai"):
 		return "mistral"
-	case strings.Contains(host, "generativelanguage.googleapis.com"):
+	case host == "generativelanguage.googleapis.com" || strings.HasSuffix(host, ".generativelanguage.googleapis.com"):
 		return "gemini"
-	case strings.Contains(host, "ollama.com"):
+	case host == "ollama.com" || strings.HasSuffix(host, ".ollama.com"):
 		return "ollama"
 	default:
 		return ""
@@ -174,7 +174,6 @@ func geminiModelFromURL(raw string) string {
 	if idx := strings.IndexByte(model, ':'); idx >= 0 {
 		model = model[:idx]
 	}
-	model = strings.TrimPrefix(model, "models/")
 	return model
 }
 
