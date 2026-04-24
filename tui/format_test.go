@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"encoding/base64"
 	"strings"
 	"testing"
 	"time"
@@ -29,6 +30,72 @@ func TestParseJSONLRecordUsesEventTimestamp(t *testing.T) {
 	want := time.Date(2026, 4, 21, 12, 0, 1, 0, time.UTC)
 	if !record.Timestamp.Equal(want) {
 		t.Fatalf("record.Timestamp = %s, want %s", record.Timestamp.Format(time.RFC3339), want.Format(time.RFC3339))
+	}
+}
+
+func TestParseJSONLRecordExtractsOpenAIModelTag(t *testing.T) {
+	t.Parallel()
+
+	body := base64.StdEncoding.EncodeToString([]byte(`{"model":"gpt-5","input":"hi"}`))
+	record, err := parseJSONLRecord([]byte(`{
+		"endpoint":"http_request",
+		"timestamp":"2026-04-21T12:00:05Z",
+		"event":{
+			"timestamp":"2026-04-21T12:00:01Z",
+			"method":"POST",
+			"url":"https://api.openai.com/v1/responses",
+			"body":"` + body + `"
+		}
+	}`))
+	if err != nil {
+		t.Fatalf("parseJSONLRecord() error = %v", err)
+	}
+	if record.Provider != "openai" || record.Model != "gpt-5" {
+		t.Fatalf("provider/model = (%q, %q), want (%q, %q)", record.Provider, record.Model, "openai", "gpt-5")
+	}
+}
+
+func TestParseJSONLRecordExtractsGeminiModelFromURL(t *testing.T) {
+	t.Parallel()
+
+	body := base64.StdEncoding.EncodeToString([]byte(`{"contents":[{"parts":[{"text":"hi"}]}]}`))
+	record, err := parseJSONLRecord([]byte(`{
+		"endpoint":"http_request",
+		"timestamp":"2026-04-21T12:00:05Z",
+		"event":{
+			"timestamp":"2026-04-21T12:00:01Z",
+			"method":"POST",
+			"url":"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+			"body":"` + body + `"
+		}
+	}`))
+	if err != nil {
+		t.Fatalf("parseJSONLRecord() error = %v", err)
+	}
+	if record.Provider != "gemini" || record.Model != "gemini-2.5-flash" {
+		t.Fatalf("provider/model = (%q, %q), want (%q, %q)", record.Provider, record.Model, "gemini", "gemini-2.5-flash")
+	}
+}
+
+func TestParseJSONLRecordTreatsLocalhostAsLocalProvider(t *testing.T) {
+	t.Parallel()
+
+	body := base64.StdEncoding.EncodeToString([]byte(`{"model":"qwen3:14b","messages":[{"role":"user","content":"hi"}]}`))
+	record, err := parseJSONLRecord([]byte(`{
+		"endpoint":"http_request",
+		"timestamp":"2026-04-21T12:00:05Z",
+		"event":{
+			"timestamp":"2026-04-21T12:00:01Z",
+			"method":"POST",
+			"url":"http://localhost:11434/v1/chat/completions",
+			"body":"` + body + `"
+		}
+	}`))
+	if err != nil {
+		t.Fatalf("parseJSONLRecord() error = %v", err)
+	}
+	if record.Provider != "local" || record.Model != "qwen3:14b" {
+		t.Fatalf("provider/model = (%q, %q), want (%q, %q)", record.Provider, record.Model, "local", "qwen3:14b")
 	}
 }
 
