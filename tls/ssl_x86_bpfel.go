@@ -22,9 +22,7 @@ type sslCallInfo struct {
 
 type sslCallInfoEx struct {
 	_              structs.HostLayout
-	BufAddr        uint64
-	Len            uint64
-	SslPtr         uint64
+	Base           sslCallInfo
 	ConsumedLenPtr uint64
 }
 
@@ -47,16 +45,18 @@ type sslEvent struct {
 //
 // Used for safe lookups in a Collection or CollectionSpec.
 const (
-	sslMapFakeEventMap         = "_fake_event_map"
-	sslMapEvents               = "events"
-	sslMapStartExMap           = "start_ex_map"
-	sslMapStartMap             = "start_map"
-	sslProgProbeSslReadEntry   = "probe_ssl_read_entry"
-	sslProgProbeSslReadExEntry = "probe_ssl_read_ex_entry"
-	sslProgProbeSslReadExExit  = "probe_ssl_read_ex_exit"
-	sslProgProbeSslReadExit    = "probe_ssl_read_exit"
-	sslProgProbeSslWriteExExit = "probe_ssl_write_ex_exit"
-	sslProgProbeSslWriteExit   = "probe_ssl_write_exit"
+	sslMapFakeEventMap          = "_fake_event_map"
+	sslMapEvents                = "events"
+	sslMapStartExMap            = "start_ex_map"
+	sslMapStartMap              = "start_map"
+	sslProgProbeSslReadEntry    = "probe_ssl_read_entry"
+	sslProgProbeSslReadExEntry  = "probe_ssl_read_ex_entry"
+	sslProgProbeSslReadExExit   = "probe_ssl_read_ex_exit"
+	sslProgProbeSslReadExit     = "probe_ssl_read_exit"
+	sslProgProbeSslWriteEntry   = "probe_ssl_write_entry"
+	sslProgProbeSslWriteExEntry = "probe_ssl_write_ex_entry"
+	sslProgProbeSslWriteExExit  = "probe_ssl_write_ex_exit"
+	sslProgProbeSslWriteExit    = "probe_ssl_write_exit"
 )
 
 // loadSsl returns the embedded CollectionSpec for ssl.
@@ -101,12 +101,14 @@ type sslSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type sslProgramSpecs struct {
-	ProbeSslReadEntry   *ebpf.ProgramSpec `ebpf:"probe_ssl_read_entry"`
-	ProbeSslReadExEntry *ebpf.ProgramSpec `ebpf:"probe_ssl_read_ex_entry"`
-	ProbeSslReadExExit  *ebpf.ProgramSpec `ebpf:"probe_ssl_read_ex_exit"`
-	ProbeSslReadExit    *ebpf.ProgramSpec `ebpf:"probe_ssl_read_exit"`
-	ProbeSslWriteExExit *ebpf.ProgramSpec `ebpf:"probe_ssl_write_ex_exit"`
-	ProbeSslWriteExit   *ebpf.ProgramSpec `ebpf:"probe_ssl_write_exit"`
+	ProbeSslReadEntry    *ebpf.ProgramSpec `ebpf:"probe_ssl_read_entry"`
+	ProbeSslReadExEntry  *ebpf.ProgramSpec `ebpf:"probe_ssl_read_ex_entry"`
+	ProbeSslReadExExit   *ebpf.ProgramSpec `ebpf:"probe_ssl_read_ex_exit"`
+	ProbeSslReadExit     *ebpf.ProgramSpec `ebpf:"probe_ssl_read_exit"`
+	ProbeSslWriteEntry   *ebpf.ProgramSpec `ebpf:"probe_ssl_write_entry"`
+	ProbeSslWriteExEntry *ebpf.ProgramSpec `ebpf:"probe_ssl_write_ex_entry"`
+	ProbeSslWriteExExit  *ebpf.ProgramSpec `ebpf:"probe_ssl_write_ex_exit"`
+	ProbeSslWriteExit    *ebpf.ProgramSpec `ebpf:"probe_ssl_write_exit"`
 }
 
 // sslMapSpecs contains maps before they are loaded into the kernel.
@@ -170,12 +172,14 @@ type sslVariables struct {
 //
 // It can be passed to loadSslObjects or ebpf.CollectionSpec.LoadAndAssign.
 type sslPrograms struct {
-	ProbeSslReadEntry   *ebpf.Program `ebpf:"probe_ssl_read_entry"`
-	ProbeSslReadExEntry *ebpf.Program `ebpf:"probe_ssl_read_ex_entry"`
-	ProbeSslReadExExit  *ebpf.Program `ebpf:"probe_ssl_read_ex_exit"`
-	ProbeSslReadExit    *ebpf.Program `ebpf:"probe_ssl_read_exit"`
-	ProbeSslWriteExExit *ebpf.Program `ebpf:"probe_ssl_write_ex_exit"`
-	ProbeSslWriteExit   *ebpf.Program `ebpf:"probe_ssl_write_exit"`
+	ProbeSslReadEntry    *ebpf.Program `ebpf:"probe_ssl_read_entry"`
+	ProbeSslReadExEntry  *ebpf.Program `ebpf:"probe_ssl_read_ex_entry"`
+	ProbeSslReadExExit   *ebpf.Program `ebpf:"probe_ssl_read_ex_exit"`
+	ProbeSslReadExit     *ebpf.Program `ebpf:"probe_ssl_read_exit"`
+	ProbeSslWriteEntry   *ebpf.Program `ebpf:"probe_ssl_write_entry"`
+	ProbeSslWriteExEntry *ebpf.Program `ebpf:"probe_ssl_write_ex_entry"`
+	ProbeSslWriteExExit  *ebpf.Program `ebpf:"probe_ssl_write_ex_exit"`
+	ProbeSslWriteExit    *ebpf.Program `ebpf:"probe_ssl_write_exit"`
 }
 
 func (p *sslPrograms) Close() error {
@@ -184,6 +188,8 @@ func (p *sslPrograms) Close() error {
 		p.ProbeSslReadExEntry,
 		p.ProbeSslReadExExit,
 		p.ProbeSslReadExit,
+		p.ProbeSslWriteEntry,
+		p.ProbeSslWriteExEntry,
 		p.ProbeSslWriteExExit,
 		p.ProbeSslWriteExit,
 	)

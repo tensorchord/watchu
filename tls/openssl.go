@@ -24,9 +24,9 @@ func attachSSLProbes(ex *link.Executable, objs *sslObjects, target string) ([]li
 		{"SSL_read", objs.ProbeSslReadExit, ex.Uretprobe},
 		{"SSL_read_ex", objs.ProbeSslReadExEntry, ex.Uprobe},
 		{"SSL_read_ex", objs.ProbeSslReadExExit, ex.Uretprobe},
-		{"SSL_write", objs.ProbeSslReadEntry, ex.Uprobe},
+		{"SSL_write", objs.ProbeSslWriteEntry, ex.Uprobe},
 		{"SSL_write", objs.ProbeSslWriteExit, ex.Uretprobe},
-		{"SSL_write_ex", objs.ProbeSslReadExEntry, ex.Uprobe},
+		{"SSL_write_ex", objs.ProbeSslWriteExEntry, ex.Uprobe},
 		{"SSL_write_ex", objs.ProbeSslWriteExExit, ex.Uretprobe},
 	}
 
@@ -35,7 +35,7 @@ func attachSSLProbes(ex *link.Executable, objs *sslObjects, target string) ([]li
 	for _, probe := range probes {
 		up, err := probe.inject(probe.symbol, probe.prog, nil)
 		if err != nil {
-			log.Warn().Str("target", target).Err(err).Msgf("failed to attach probe %s", probe.symbol)
+			log.Warn().Str("target", target).Str("symbol", probe.symbol).Err(err).Msg("failed to attach OpenSSL probe")
 			failedProbes++
 			continue
 		}
