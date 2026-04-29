@@ -88,22 +88,23 @@ func attachBoringProbes(ex *link.Executable, objs *boringObjects, target string)
 		return nil, err
 	}
 	probes := []struct {
+		name    string
 		address uint64
 		prog    *ebpf.Program
 		inject  func(string, *ebpf.Program, *link.UprobeOptions) (link.Link, error)
 	}{
-		{uint64(read), objs.ProbeBoringSslReadEntry, ex.Uprobe},
-		{uint64(read), objs.ProbeBoringSslReadExit, ex.Uretprobe},
-		{uint64(write), objs.ProbeBoringSslReadEntry, ex.Uprobe},
-		{uint64(write), objs.ProbeBoringSslWriteExit, ex.Uretprobe},
+		{"read_entry", uint64(read), objs.ProbeBoringSslReadEntry, ex.Uprobe},
+		{"read_exit", uint64(read), objs.ProbeBoringSslReadExit, ex.Uretprobe},
+		{"write_entry", uint64(write), objs.ProbeBoringSslWriteEntry, ex.Uprobe},
+		{"write_exit", uint64(write), objs.ProbeBoringSslWriteExit, ex.Uretprobe},
 	}
 
 	failed := 0
 	links := []link.Link{}
 	for _, probe := range probes {
-		up, err := probe.inject("BoringSSL", probe.prog, &link.UprobeOptions{Address: probe.address})
+		up, err := probe.inject(probe.name, probe.prog, &link.UprobeOptions{Address: probe.address})
 		if err != nil {
-			log.Warn().Str("target", target).Err(err).Uint64("addr", probe.address).Msg("failed to attach BoringSSL probe")
+			log.Warn().Str("target", target).Str("probe", probe.name).Err(err).Uint64("addr", probe.address).Msg("failed to attach BoringSSL probe")
 			failed++
 			continue
 		}

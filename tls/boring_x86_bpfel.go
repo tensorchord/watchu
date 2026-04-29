@@ -39,12 +39,13 @@ type boringEvent struct {
 //
 // Used for safe lookups in a Collection or CollectionSpec.
 const (
-	boringMapFakeEventMap             = "_fake_event_map"
-	boringMapEvents                   = "events"
-	boringMapStartMap                 = "start_map"
-	boringProgProbeBoringSslReadEntry = "probe_boring_ssl_read_entry"
-	boringProgProbeBoringSslReadExit  = "probe_boring_ssl_read_exit"
-	boringProgProbeBoringSslWriteExit = "probe_boring_ssl_write_exit"
+	boringMapFakeEventMap              = "_fake_event_map"
+	boringMapEvents                    = "events"
+	boringMapStartMap                  = "start_map"
+	boringProgProbeBoringSslReadEntry  = "probe_boring_ssl_read_entry"
+	boringProgProbeBoringSslReadExit   = "probe_boring_ssl_read_exit"
+	boringProgProbeBoringSslWriteEntry = "probe_boring_ssl_write_entry"
+	boringProgProbeBoringSslWriteExit  = "probe_boring_ssl_write_exit"
 )
 
 // loadBoring returns the embedded CollectionSpec for boring.
@@ -89,9 +90,10 @@ type boringSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type boringProgramSpecs struct {
-	ProbeBoringSslReadEntry *ebpf.ProgramSpec `ebpf:"probe_boring_ssl_read_entry"`
-	ProbeBoringSslReadExit  *ebpf.ProgramSpec `ebpf:"probe_boring_ssl_read_exit"`
-	ProbeBoringSslWriteExit *ebpf.ProgramSpec `ebpf:"probe_boring_ssl_write_exit"`
+	ProbeBoringSslReadEntry  *ebpf.ProgramSpec `ebpf:"probe_boring_ssl_read_entry"`
+	ProbeBoringSslReadExit   *ebpf.ProgramSpec `ebpf:"probe_boring_ssl_read_exit"`
+	ProbeBoringSslWriteEntry *ebpf.ProgramSpec `ebpf:"probe_boring_ssl_write_entry"`
+	ProbeBoringSslWriteExit  *ebpf.ProgramSpec `ebpf:"probe_boring_ssl_write_exit"`
 }
 
 // boringMapSpecs contains maps before they are loaded into the kernel.
@@ -152,15 +154,17 @@ type boringVariables struct {
 //
 // It can be passed to loadBoringObjects or ebpf.CollectionSpec.LoadAndAssign.
 type boringPrograms struct {
-	ProbeBoringSslReadEntry *ebpf.Program `ebpf:"probe_boring_ssl_read_entry"`
-	ProbeBoringSslReadExit  *ebpf.Program `ebpf:"probe_boring_ssl_read_exit"`
-	ProbeBoringSslWriteExit *ebpf.Program `ebpf:"probe_boring_ssl_write_exit"`
+	ProbeBoringSslReadEntry  *ebpf.Program `ebpf:"probe_boring_ssl_read_entry"`
+	ProbeBoringSslReadExit   *ebpf.Program `ebpf:"probe_boring_ssl_read_exit"`
+	ProbeBoringSslWriteEntry *ebpf.Program `ebpf:"probe_boring_ssl_write_entry"`
+	ProbeBoringSslWriteExit  *ebpf.Program `ebpf:"probe_boring_ssl_write_exit"`
 }
 
 func (p *boringPrograms) Close() error {
 	return _BoringClose(
 		p.ProbeBoringSslReadEntry,
 		p.ProbeBoringSslReadExit,
+		p.ProbeBoringSslWriteEntry,
 		p.ProbeBoringSslWriteExit,
 	)
 }
