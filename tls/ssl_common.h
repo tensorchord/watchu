@@ -55,6 +55,10 @@ static __always_inline void emit_ssl_events(void *ringbuf, u64 key, const struct
     u64 uid_gid   = bpf_get_current_uid_gid();
     u64 cgroup_id = bpf_get_current_cgroup_id();
     void *buf     = (void *)info->buf_addr;
+    size_t max_bytes = MAX_LOOP * MAX_BODY_SIZE;
+
+    if (remaining > max_bytes)
+        remaining = max_bytes;
 
     bpf_repeat(MAX_LOOP) {
         u32 length = (u32)remaining;
