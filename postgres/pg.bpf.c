@@ -174,7 +174,7 @@ int tracepoint_enter_sendto(struct sendto_ctx *ctx) {
     }
 
     // negotiated Postgres connection, could be plaintext
-    if (*flag != CONN_FLAG_PLAINTEXT)
+    if (*flag > CONN_FLAG_GSSENC)
         return 0;
 
     // only capture the plaintext Postgres traffic
