@@ -99,6 +99,27 @@ static __always_inline u8 is_mcp_json_str(const char *buf, u32 len) {
     return 0;
 }
 
+static __always_inline int emit_stdio_event(const void *buf, u64 req_len, u32 data_len, u64 fd, u8 rw) {
+    struct event *evt = bpf_ringbuf_reserve(&events, sizeof(*evt), 0);
+    if (!evt) {
+        return 0;
+    }
+
+    evt->timestamp_ns = bpf_ktime_get_ns();
+    evt->pid_tgid     = bpf_get_current_pid_tgid();
+    evt->uid_gid      = bpf_get_current_uid_gid();
+    evt->cgroup_id    = bpf_get_current_cgroup_id();
+    evt->req_len      = req_len;
+    evt->data_len     = data_len;
+    evt->fd           = fd;
+    evt->rw           = rw;
+    bpf_get_current_comm(&evt->comm, TASK_COMM_LEN);
+    bpf_probe_read(evt->data, data_len, buf);
+
+    bpf_ringbuf_submit(evt, 0);
+    return 0;
+}
+
 SEC("tracepoint/syscalls/sys_enter_read")
 int tracepoint_enter_read(struct enter_ctx *ctx) {
     if (ctx->count == 0) {
@@ -137,22 +158,7 @@ int tracepoint_exit_read(struct exit_ctx *ctx) {
     if (is_mcp_json_str((const char *)read->buf, length) == 0)
         goto cleanup;
 
-    struct event *evt = bpf_ringbuf_reserve(&events, sizeof(*evt), 0);
-    if (!evt)
-        goto cleanup;
-
-    evt->timestamp_ns = bpf_ktime_get_ns();
-    evt->pid_tgid     = pid_tgid;
-    evt->uid_gid      = bpf_get_current_uid_gid();
-    evt->cgroup_id    = bpf_get_current_cgroup_id();
-    evt->req_len      = read->count;
-    evt->data_len     = length;
-    evt->fd           = read->fd;
-    evt->rw           = 4;
-    bpf_get_current_comm(&evt->comm, TASK_COMM_LEN);
-    bpf_probe_read(evt->data, length, (void *)read->buf);
-
-    bpf_ringbuf_submit(evt, 0);
+    emit_stdio_event((void *)read->buf, read->count, length, read->fd, 4);
 
 cleanup:
     bpf_map_delete_elem(&inflight, &pid_tgid);
@@ -177,21 +183,5 @@ int tracepoint_enter_write(struct enter_ctx *ctx) {
     if (is_mcp_json_str((const char *)ctx->buf, length) == 0)
         return 0;
 
-    struct event *evt = bpf_ringbuf_reserve(&events, sizeof(*evt), 0);
-    if (!evt)
-        return 0;
-
-    evt->timestamp_ns = bpf_ktime_get_ns();
-    evt->pid_tgid     = pid_tgid;
-    evt->uid_gid      = bpf_get_current_uid_gid();
-    evt->cgroup_id    = bpf_get_current_cgroup_id();
-    evt->req_len      = ctx->count;
-    evt->data_len     = length;
-    evt->fd           = ctx->fd;
-    evt->rw           = 2;
-    bpf_get_current_comm(&evt->comm, TASK_COMM_LEN);
-    bpf_probe_read(evt->data, length, (void *)ctx->buf);
-
-    bpf_ringbuf_submit(evt, 0);
-    return 0;
+    return emit_stdio_event((void *)ctx->buf, ctx->count, length, ctx->fd, 2);
 }
