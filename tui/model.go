@@ -21,21 +21,55 @@ const (
 )
 
 var (
-	titleStyle        = lipgloss.NewStyle().Bold(true)
-	headerStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
-	tabActiveStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6")).Background(lipgloss.Color("7")).Padding(0, 1)
-	tabInactiveStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Padding(0, 1)
-	cursorStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
-	selectedStyle     = lipgloss.NewStyle()
-	detailBoxStyle    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("8")).Padding(0, 1)
-	footerStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
-	separatorStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	titleStyle           = lipgloss.NewStyle().Bold(true)
+	headerStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
+	tabActiveStyle       = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6")).Background(lipgloss.Color("7")).Padding(0, 1)
+	tabInactiveStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Padding(0, 1)
+	cursorStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
+	selectedStyle        = lipgloss.NewStyle()
+	detailBoxStyle       = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("8")).Padding(0, 1)
+	footerStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
+	separatorStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	defaultModelTagStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.CompleteColor{TrueColor: "#172554", ANSI256: "18", ANSI: "0"}).
+				Background(lipgloss.CompleteColor{TrueColor: "#BFDBFE", ANSI256: "153", ANSI: "7"}).
+				Padding(0, 1)
 	sessionLinkStyles = []lipgloss.Style{
 		lipgloss.NewStyle().Foreground(lipgloss.CompleteColor{TrueColor: "#A5B4FC", ANSI256: "147", ANSI: "4"}),
 		lipgloss.NewStyle().Foreground(lipgloss.CompleteColor{TrueColor: "#86EFAC", ANSI256: "120", ANSI: "2"}),
 		lipgloss.NewStyle().Foreground(lipgloss.CompleteColor{TrueColor: "#67E8F9", ANSI256: "81", ANSI: "6"}),
 		lipgloss.NewStyle().Foreground(lipgloss.CompleteColor{TrueColor: "#C4B5FD", ANSI256: "183", ANSI: "5"}),
 		lipgloss.NewStyle().Foreground(lipgloss.CompleteColor{TrueColor: "#F9A8D4", ANSI256: "218", ANSI: "5"}),
+	}
+	modelTagStyles = map[string]lipgloss.Style{
+		"openai": lipgloss.NewStyle().
+			Foreground(lipgloss.CompleteColor{TrueColor: "#052E16", ANSI256: "22", ANSI: "0"}).
+			Background(lipgloss.CompleteColor{TrueColor: "#86EFAC", ANSI256: "120", ANSI: "2"}).
+			Padding(0, 1),
+		"anthropic": lipgloss.NewStyle().
+			Foreground(lipgloss.CompleteColor{TrueColor: "#431407", ANSI256: "52", ANSI: "0"}).
+			Background(lipgloss.CompleteColor{TrueColor: "#FDBA74", ANSI256: "215", ANSI: "3"}).
+			Padding(0, 1),
+		"gemini": lipgloss.NewStyle().
+			Foreground(lipgloss.CompleteColor{TrueColor: "#172554", ANSI256: "18", ANSI: "0"}).
+			Background(lipgloss.CompleteColor{TrueColor: "#93C5FD", ANSI256: "117", ANSI: "4"}).
+			Padding(0, 1),
+		"groq": lipgloss.NewStyle().
+			Foreground(lipgloss.CompleteColor{TrueColor: "#4A044E", ANSI256: "53", ANSI: "0"}).
+			Background(lipgloss.CompleteColor{TrueColor: "#F0ABFC", ANSI256: "219", ANSI: "5"}).
+			Padding(0, 1),
+		"mistral": lipgloss.NewStyle().
+			Foreground(lipgloss.CompleteColor{TrueColor: "#082F49", ANSI256: "17", ANSI: "0"}).
+			Background(lipgloss.CompleteColor{TrueColor: "#67E8F9", ANSI256: "81", ANSI: "6"}).
+			Padding(0, 1),
+		"ollama": lipgloss.NewStyle().
+			Foreground(lipgloss.CompleteColor{TrueColor: "#422006", ANSI256: "58", ANSI: "0"}).
+			Background(lipgloss.CompleteColor{TrueColor: "#FDE68A", ANSI256: "228", ANSI: "3"}).
+			Padding(0, 1),
+		"local": lipgloss.NewStyle().
+			Foreground(lipgloss.CompleteColor{TrueColor: "#3F3F46", ANSI256: "238", ANSI: "0"}).
+			Background(lipgloss.CompleteColor{TrueColor: "#D4D4D8", ANSI256: "252", ANSI: "7"}).
+			Padding(0, 1),
 	}
 )
 
@@ -55,6 +89,8 @@ type displayRecord struct {
 	Endpoint   string
 	Timestamp  time.Time
 	SessionKey string
+	Provider   string
+	Model      string
 	Summary    string
 	Detail     string
 }
@@ -379,7 +415,11 @@ func (m model) renderQuitConfirm() string {
 func (m model) renderRecordLine(record displayRecord, annotation pairLineAnnotation, selected bool, contentWidth int) string {
 	style := endpointDefinitionFor(record.Endpoint).Style
 	ts := record.Timestamp.Format("15:04:05")
-	label := style.Render(record.Endpoint)
+	labelParts := []string{style.Render(record.Endpoint)}
+	if record.Model != "" {
+		labelParts = append(labelParts, modelTagStyle(record.Provider).Render(record.Model))
+	}
+	label := lipgloss.JoinHorizontal(lipgloss.Left, labelParts...)
 	cursor := "  "
 	if selected {
 		cursor = cursorStyle.Render("> ")
@@ -414,6 +454,13 @@ func sessionLinkStyleForLevel(level int) lipgloss.Style {
 		return lipgloss.NewStyle()
 	}
 	return sessionLinkStyles[level%len(sessionLinkStyles)]
+}
+
+func modelTagStyle(provider string) lipgloss.Style {
+	if style, ok := modelTagStyles[provider]; ok {
+		return style
+	}
+	return defaultModelTagStyle
 }
 
 func (m model) waitForStream() tea.Cmd {

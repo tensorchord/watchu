@@ -5,6 +5,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/url"
+	"strings"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -28,10 +30,13 @@ func parseJSONLRecord(line []byte) (displayRecord, error) {
 	}
 
 	def := endpointDefinitionFor(record.Endpoint)
+	provider, model := httpProviderModel(record.Endpoint, event)
 	return displayRecord{
 		Endpoint:   record.Endpoint,
 		Timestamp:  eventTimestamp(event, record.Timestamp),
 		SessionKey: fieldString(event, "session_key"),
+		Provider:   provider,
+		Model:      model,
 		Summary:    def.Summarize(event, raw),
 		Detail:     renderEventDetail(def, raw),
 	}, nil
@@ -92,6 +97,84 @@ func fieldString(event map[string]any, key string) string {
 	default:
 		return fmt.Sprint(val)
 	}
+}
+
+func httpProviderModel(endpoint string, event map[string]any) (string, string) {
+	if endpoint != "http_request" && endpoint != "http_response" {
+		return "", ""
+	}
+
+	urlString := fieldString(event, "url")
+	provider := providerFromURL(urlString)
+	model := modelFromHTTPEvent(event)
+	if model == "" && provider == "gemini" {
+		model = geminiModelFromURL(urlString)
+	}
+	if model == "" {
+		return "", ""
+	}
+	return provider, model
+}
+
+func modelFromHTTPEvent(event map[string]any) string {
+	bodyString := fieldString(event, "body")
+	if bodyString == "" {
+		return ""
+	}
+	decoded, err := base64.StdEncoding.DecodeString(bodyString)
+	if err != nil || len(decoded) == 0 {
+		return ""
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(decoded, &body); err != nil {
+		return ""
+	}
+	return fieldString(body, "model")
+}
+
+func providerFromURL(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	host := strings.ToLower(parsed.Hostname())
+
+	switch {
+	case host == "localhost" || host == "127.0.0.1" || host == "::1":
+		return "local"
+	case host == "openai.com" || strings.HasSuffix(host, ".openai.com"):
+		return "openai"
+	case host == "anthropic.com" || strings.HasSuffix(host, ".anthropic.com"):
+		return "anthropic"
+	case host == "groq.com" || strings.HasSuffix(host, ".groq.com"):
+		return "groq"
+	case host == "mistral.ai" || strings.HasSuffix(host, ".mistral.ai"):
+		return "mistral"
+	case host == "generativelanguage.googleapis.com" || strings.HasSuffix(host, ".generativelanguage.googleapis.com"):
+		return "gemini"
+	case host == "ollama.com" || strings.HasSuffix(host, ".ollama.com"):
+		return "ollama"
+	default:
+		return ""
+	}
+}
+
+func geminiModelFromURL(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	path := parsed.EscapedPath()
+	start := strings.Index(path, "/models/")
+	if start < 0 {
+		return ""
+	}
+	model := path[start+len("/models/"):]
+	if idx := strings.IndexByte(model, ':'); idx >= 0 {
+		model = model[:idx]
+	}
+	return model
 }
 
 func isPrintableUTF8(data []byte) bool {
