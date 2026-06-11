@@ -37,7 +37,14 @@ jobs:
     runs-on: ${{ matrix.runner }}
     container:
       image: ghcr.io/tensorchord/ebpf-builder:0.2.0
-      options: --privileged
+      options: >-
+        --cap-add=CAP_SYS_ADMIN
+        --cap-add=CAP_SYS_PTRACE
+        --cap-add=CAP_BPF
+        --cap-add=CAP_PERFMON
+        -v /sys/kernel/debug:/sys/kernel/debug:ro
+        --pid=host
+        -security-opt apparmor=unconfined
     steps:
       - uses: actions/checkout@v6
 

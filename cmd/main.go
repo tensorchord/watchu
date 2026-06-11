@@ -183,7 +183,7 @@ func run(ctx context.Context, cfg CmdConfig) error {
 	}
 
 	<-ctx.Done()
-	return normalizeShutdownCause(context.Cause(ctx))
+	return ctx.Err()
 }
 
 func normalizeShutdownCause(err error) error {
