@@ -183,26 +183,7 @@ func run(ctx context.Context, cfg CmdConfig) error {
 	}
 
 	<-ctx.Done()
-	return ctx.Err()
-}
-
-func normalizeShutdownCause(err error) error {
-	if isNotifySignalCause(err, syscall.SIGINT, syscall.SIGTERM) {
-		return context.Canceled
-	}
-	return err
-}
-
-func isNotifySignalCause(err error, signals ...syscall.Signal) bool {
-	if err == nil {
-		return false
-	}
-	for _, sig := range signals {
-		if err.Error() == sig.String()+" signal received" {
-			return true
-		}
-	}
-	return false
+	return ctx.Err() //nolint:forbidigo // main treats context.Canceled as a normal shutdown.
 }
 
 func resolveRuntimePaths(target string, logPath string, enableTUI bool) (string, string, string, string, error) {
