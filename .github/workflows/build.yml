@@ -44,7 +44,7 @@ jobs:
         --cap-add=CAP_PERFMON
         -v /sys/kernel/debug:/sys/kernel/debug:ro
         --pid=host
-        -security-opt apparmor=unconfined
+        --security-opt apparmor=unconfined
     steps:
       - uses: actions/checkout@v6
 
