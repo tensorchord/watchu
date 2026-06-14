@@ -183,7 +183,7 @@ func run(ctx context.Context, cfg CmdConfig) error {
 	}
 
 	<-ctx.Done()
-	return ctx.Err() //nolint:forbidigo // main treats context.Canceled as a normal shutdown.
+	return ctx.Err() //nolint:forbidigo // breaking change in https://go.dev/doc/go1.26#ossignalpkgossignal
 }
 
 func resolveRuntimePaths(target string, logPath string, enableTUI bool) (string, string, string, string, error) {
