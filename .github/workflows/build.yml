@@ -90,5 +90,5 @@ jobs:
           done
           [ "${missing}" -eq 0 ]
 
-          kill -TERM "${watchu_pid}"
+          kill -TERM "${watchu_pid}" 2>/dev/null || true
           wait "${watchu_pid}"
