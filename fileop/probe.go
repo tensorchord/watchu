@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"runtime"
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
@@ -105,6 +106,9 @@ func attachFileOpProbes(objs fileopObjects) ([]link.Link, error) {
 
 	links := make([]link.Link, 0, len(probes))
 	for _, probe := range probes {
+		if unsupportedFileOpTracepoint(runtime.GOARCH, probe.name) {
+			continue
+		}
 		l, err := link.Tracepoint(probe.group, probe.name, probe.prog, nil)
 		if err != nil {
 			for _, attached := range links {
@@ -115,6 +119,23 @@ func attachFileOpProbes(objs fileopObjects) ([]link.Link, error) {
 		links = append(links, l)
 	}
 	return links, nil
+}
+
+func unsupportedFileOpTracepoint(goarch, name string) bool {
+	if goarch != "arm64" {
+		return false
+	}
+
+	switch name {
+	case "sys_enter_open",
+		"sys_exit_open",
+		"sys_enter_rename",
+		"sys_enter_link",
+		"sys_enter_symlink":
+		return true
+	default:
+		return false
+	}
 }
 
 func (fp *FileOpProbe) Start(ctx context.Context) {

@@ -37,6 +37,14 @@ jobs:
     runs-on: ${{ matrix.runner }}
     container:
       image: ghcr.io/tensorchord/ebpf-builder:0.2.0
+      options: >-
+        --cap-add=CAP_SYS_ADMIN
+        --cap-add=CAP_SYS_PTRACE
+        --cap-add=CAP_BPF
+        --cap-add=CAP_PERFMON
+        -v /sys/kernel/debug:/sys/kernel/debug:ro
+        --pid=host
+        --security-opt apparmor=unconfined
     steps:
       - uses: actions/checkout@v6
 
@@ -48,3 +56,39 @@ jobs:
 
       - name: Test
         run: make test
+
+      - name: Smoke watchu startup and shutdown
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mount -t tracefs tracefs /sys/kernel/tracing 2>/dev/null || true
+          test -d /sys/kernel/tracing/events
+
+          log_file="$(mktemp)"
+          ./bin/app >"${log_file}" 2>&1 &
+          watchu_pid=$!
+          trap 'kill -TERM "${watchu_pid}" 2>/dev/null || true; cat "${log_file}"' EXIT
+
+          ready_logs=(
+            "listen to proc exec events"
+            "listening for SSL read/write events"
+            "listening for stdio events"
+            "listening for postgres read socket events"
+            "listening for outbound TCP connect events"
+            "listening for file operation events"
+          )
+
+          for _ in {1..30}; do
+            kill -0 "${watchu_pid}" 2>/dev/null || { wait "${watchu_pid}"; exit 1; }
+            missing=0
+            for log in "${ready_logs[@]}"; do
+              grep -q "${log}" "${log_file}" || missing=1
+            done
+            [ "${missing}" -eq 0 ] && break
+            sleep 1
+          done
+          [ "${missing}" -eq 0 ]
+
+          kill -TERM "${watchu_pid}" 2>/dev/null || true
+          wait "${watchu_pid}"
