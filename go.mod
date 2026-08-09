@@ -6,16 +6,16 @@ require (
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
-	github.com/cilium/ebpf v0.21.1-0.20260413095610-4c48d03c2ab3
+	github.com/cilium/ebpf v0.22.0
 	github.com/google/uuid v1.6.0
-	github.com/klauspost/compress v1.18.6
+	github.com/klauspost/compress v1.19.0
 	github.com/maypok86/otter/v2 v2.3.0
-	github.com/phuslu/log v1.0.124
+	github.com/phuslu/log v1.0.128
 	github.com/tidwall/gjson v1.19.0
 	go.opentelemetry.io/proto/otlp v1.10.0
-	golang.org/x/net v0.54.0
-	golang.org/x/sys v0.44.0
-	google.golang.org/grpc v1.81.1
+	golang.org/x/net v0.57.0
+	golang.org/x/sys v0.47.0
+	google.golang.org/grpc v1.82.1
 	google.golang.org/protobuf v1.36.11
 )
 
@@ -44,8 +44,8 @@ require (
 	github.com/tidwall/match v1.2.0 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
-	golang.org/x/text v0.37.0 // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20260319201613-d00831a3d3e7 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260319201613-d00831a3d3e7 // indirect
+	golang.org/x/text v0.40.0 // indirect
+	google.golang.org/genproto/googleapis/api v0.0.0-20260414002931-afd174a4e478 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260414002931-afd174a4e478 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
