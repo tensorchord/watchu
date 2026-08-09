@@ -8,11 +8,11 @@ require (
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/cilium/ebpf v0.22.0
 	github.com/google/uuid v1.6.0
-	github.com/klauspost/compress v1.19.0
+	github.com/klauspost/compress v1.19.1
 	github.com/maypok86/otter/v2 v2.3.0
 	github.com/phuslu/log v1.0.128
 	github.com/tidwall/gjson v1.19.0
-	go.opentelemetry.io/proto/otlp v1.10.0
+	go.opentelemetry.io/proto/otlp v1.11.0
 	golang.org/x/net v0.57.0
 	golang.org/x/sys v0.47.0
 	google.golang.org/grpc v1.82.1
@@ -30,7 +30,7 @@ require (
 	github.com/clipperhouse/uax29/v2 v2.5.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect
-	github.com/grpc-ecosystem/grpc-gateway/v2 v2.28.0 // indirect
+	github.com/grpc-ecosystem/grpc-gateway/v2 v2.29.0 // indirect
 	github.com/lucasb-eyer/go-colorful v1.3.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mattn/go-localereader v0.0.1 // indirect
@@ -45,7 +45,7 @@ require (
 	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	golang.org/x/text v0.40.0 // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20260414002931-afd174a4e478 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260414002931-afd174a4e478 // indirect
+	google.golang.org/genproto/googleapis/api v0.0.0-20260720211330-0afa2a65878a // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260720211330-0afa2a65878a // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
