@@ -53,6 +53,7 @@ const (
 	fileopMapInflightOpen       = "inflight_open"
 	fileopMapInflightWrite      = "inflight_write"
 	fileopMapPathHeap           = "path_heap"
+	fileopMapTrackedPids        = "tracked_pids"
 	fileopProgTraceClose        = "trace_close"
 	fileopProgTraceDelete       = "trace_delete"
 	fileopProgTraceEnterOpen    = "trace_enter_open"
@@ -145,6 +146,7 @@ type fileopMapSpecs struct {
 	InflightOpen  *ebpf.MapSpec `ebpf:"inflight_open"`
 	InflightWrite *ebpf.MapSpec `ebpf:"inflight_write"`
 	PathHeap      *ebpf.MapSpec `ebpf:"path_heap"`
+	TrackedPids   *ebpf.MapSpec `ebpf:"tracked_pids"`
 }
 
 // fileopVariableSpecs contains global variables before they are loaded into the kernel.
@@ -179,6 +181,7 @@ type fileopMaps struct {
 	InflightOpen  *ebpf.Map `ebpf:"inflight_open"`
 	InflightWrite *ebpf.Map `ebpf:"inflight_write"`
 	PathHeap      *ebpf.Map `ebpf:"path_heap"`
+	TrackedPids   *ebpf.Map `ebpf:"tracked_pids"`
 }
 
 func (m *fileopMaps) Close() error {
@@ -189,6 +192,7 @@ func (m *fileopMaps) Close() error {
 		m.InflightOpen,
 		m.InflightWrite,
 		m.PathHeap,
+		m.TrackedPids,
 	)
 }
 

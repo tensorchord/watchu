@@ -16,6 +16,7 @@ import (
 	"github.com/tensorchord/watchu/export"
 	"github.com/tensorchord/watchu/fileop"
 	"github.com/tensorchord/watchu/internal/logger"
+	"github.com/tensorchord/watchu/internal/pidfilter"
 	"github.com/tensorchord/watchu/internal/tool"
 	"github.com/tensorchord/watchu/otelrecv"
 	"github.com/tensorchord/watchu/postgres"
@@ -43,6 +44,7 @@ type CmdConfig struct {
 	sslPath          string
 	otelAddr         string
 	fileOpPolicyPath string
+	pid              int
 }
 
 func main() {
@@ -53,6 +55,7 @@ func main() {
 	otelAddr := flag.String("otel-addr", "", "OTLP gRPC receiver address, e.g., ':4317' (optional). Enable to capture AI tool telemetry")
 	fileOpPolicyPath := flag.String("fileop-policy", "", fmt.Sprintf(`path to fileop match policy config (.json only); empty=built-in. Example: %s`, fileOpPolicyExample))
 	enableTUI := flag.Bool("tui", false, "render a terminal dashboard backed by a local JSONL export file; defaults logs to a local file besides to the export file")
+	pid := flag.Int("pid", 0, "host PID to trace, including its current and future children; 0 disables PID filtering")
 	flag.Parse()
 
 	resolvedExportTarget, tuiPath, resolvedLogPath, tempDir, err := resolveRuntimePaths(*exportTarget, *logPath, *enableTUI)
@@ -86,6 +89,7 @@ func main() {
 		sslPath:          *SSLPath,
 		otelAddr:         *otelAddr,
 		fileOpPolicyPath: *fileOpPolicyPath,
+		pid:              *pid,
 	}
 
 	if *enableTUI {
@@ -129,30 +133,46 @@ func run(ctx context.Context, cfg CmdConfig) error {
 		return fmt.Errorf("initialize eBPF: %w", err)
 	}
 
-	execProbe, err := execve.NewProcExecProbe()
+	var pidFilter *pidfilter.Filter
+	if cfg.pid > 0 {
+		pidFilter, err = pidfilter.New(cfg.pid)
+		if err != nil {
+			return fmt.Errorf("initialize pid filter: %w", err)
+		}
+		defer func() {
+			if err := pidFilter.Close(); err != nil {
+				log.Error().Err(err).Msg("failed to close pid filter")
+			}
+		}()
+	}
+
+	execProbe, err := execve.NewProcExecProbe(pidFilter)
 	if err != nil {
 		return fmt.Errorf("initialize exec probe: %w", err)
 	}
 	defer execProbe.Close()
+	if pidFilter.Enabled() {
+		log.Info().Int("pid", cfg.pid).Int("tracked_pids", pidFilter.Count()).Msg("enabled pid filter")
+	}
 	go execProbe.Start(ctx)
 	go execProbe.IngestExecEvents(ctx, exporter)
 
-	sslProbe := tls.NewTLSProbe(execProbe, &cfg.sslPath, exporter)
+	sslProbe := tls.NewTLSProbe(execProbe, &cfg.sslPath, exporter, pidFilter)
 	defer sslProbe.Close()
 	go sslProbe.Start(ctx)
 
-	stdioProbe, err := stdio.NewStdioProbe(exporter)
+	stdioProbe, err := stdio.NewStdioProbe(exporter, pidFilter)
 	if err != nil {
 		return fmt.Errorf("initialize stdio probe: %w", err)
 	}
 	defer stdioProbe.Close()
 	go stdioProbe.Start(ctx)
 
-	pgProbe := postgres.NewPostgresProbe(exporter)
+	pgProbe := postgres.NewPostgresProbe(exporter, pidFilter)
 	defer pgProbe.Close()
 	go pgProbe.Start(ctx)
 
-	tcpConnProbe, err := tcpconn.NewTCPConnProbe(exporter)
+	tcpConnProbe, err := tcpconn.NewTCPConnProbe(exporter, pidFilter)
 	if err != nil {
 		return fmt.Errorf("initialize tcpconn probe: %w", err)
 	}
@@ -164,7 +184,7 @@ func run(ctx context.Context, cfg CmdConfig) error {
 		return fmt.Errorf("load fileop policy %q: %w", cfg.fileOpPolicyPath, err)
 	}
 
-	fileOpProbe, err := fileop.NewFileOpProbe(exporter, fileOpPolicy)
+	fileOpProbe, err := fileop.NewFileOpProbe(exporter, fileOpPolicy, pidFilter)
 	if err != nil {
 		return fmt.Errorf("initialize fileop probe: %w", err)
 	}

@@ -20,12 +20,18 @@ import (
 	"github.com/phuslu/log"
 
 	"github.com/tensorchord/watchu/export"
+	"github.com/tensorchord/watchu/internal/pidfilter"
 	"github.com/tensorchord/watchu/internal/tool"
 )
 
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -tags linux -target amd64,arm64 exec exec.bpf.c -- -I../headers
 
 const procChannelSize = 4096
+
+const (
+	pidEventFork = 1
+	pidEventExit = 2
+)
 
 const (
 	procCmdlinePath = "/proc/%d/cmdline"
@@ -81,19 +87,23 @@ func (e *ExecEvent) ToRawExec() *export.RawExec {
 type ProcExecProbe struct {
 	rbProc     *ringbuf.Reader
 	rbDynLib   *ringbuf.Reader
+	rbPID      *ringbuf.Reader
 	objs       *execObjects
 	links      []link.Link
 	ProcChan   chan int32
 	ExecChan   chan *ExecEvent
 	DynLibChan chan *DynLib
+	pidFilter  *pidfilter.Filter
 }
 
-func attachExecProbes(objs execObjects) ([]link.Link, error) {
-	probes := []struct {
+func attachExecProbes(objs execObjects, enablePIDFilter bool) ([]link.Link, error) {
+	type tracepointProbe struct {
 		group string
 		name  string
 		prog  *ebpf.Program
-	}{
+	}
+
+	probes := []tracepointProbe{
 		{"sched", "sched_process_exec", objs.TracepointSchedProcessExec},
 		{"syscalls", "sys_enter_openat", objs.TracepointSysEnterOpenat},
 		{"syscalls", "sys_enter_openat2", objs.TracepointSysEnterOpenat},
@@ -101,6 +111,12 @@ func attachExecProbes(objs execObjects) ([]link.Link, error) {
 		{"syscalls", "sys_exit_openat2", objs.TracepointSysExitOpenat},
 		{"syscalls", "sys_enter_close", objs.TracepointSysEnterClose},
 		{"syscalls", "sys_enter_mmap", objs.TracepointSysEnterMmap},
+	}
+	if enablePIDFilter {
+		probes = append(probes,
+			tracepointProbe{"sched", "sched_process_fork", objs.TracepointSchedProcessFork},
+			tracepointProbe{"sched", "sched_process_exit", objs.TracepointSchedProcessExit},
+		)
 	}
 
 	failed := 0
@@ -123,17 +139,25 @@ func attachExecProbes(objs execObjects) ([]link.Link, error) {
 	return links, nil
 }
 
-func NewProcExecProbe() (*ProcExecProbe, error) {
+func NewProcExecProbe(pidFilter *pidfilter.Filter) (*ProcExecProbe, error) {
 	objs := &execObjects{}
-	if err := loadExecObjects(objs, nil); err != nil {
+	if err := loadExecObjects(objs, pidFilter.CollectionOptions()); err != nil {
 		log.Error().Err(err).Msg("failed to load eBPF exec spec")
 		return nil, err
 	}
 
-	links, err := attachExecProbes(*objs)
+	links, err := attachExecProbes(*objs, pidFilter.Enabled())
 	if err != nil {
 		log.Error().Err(err).Msg("failed to attach exec probes")
+		_ = objs.Close()
 		return nil, err
+	}
+	if err := pidFilter.Reconcile(); err != nil {
+		for _, l := range links {
+			_ = l.Close()
+		}
+		_ = objs.Close()
+		return nil, fmt.Errorf("reconcile pid filter after attaching lifecycle probes: %w", err)
 	}
 
 	p := &ProcExecProbe{
@@ -142,6 +166,7 @@ func NewProcExecProbe() (*ProcExecProbe, error) {
 		ProcChan:   make(chan int32, procChannelSize),
 		ExecChan:   make(chan *ExecEvent, procChannelSize),
 		DynLibChan: make(chan *DynLib, procChannelSize),
+		pidFilter:  pidFilter,
 	}
 	p.rbProc, err = ringbuf.NewReader(objs.ProcEvents)
 	if err != nil {
@@ -154,6 +179,14 @@ func NewProcExecProbe() (*ProcExecProbe, error) {
 		log.Error().Err(err).Msg("failed to open ringbuf reader for dynamic library load")
 		p.Close()
 		return nil, err
+	}
+	if pidFilter.Enabled() {
+		p.rbPID, err = ringbuf.NewReader(objs.PidEvents)
+		if err != nil {
+			log.Error().Err(err).Msg("failed to open ringbuf reader for pid lifecycle")
+			p.Close()
+			return nil, err
+		}
 	}
 	return p, nil
 }
@@ -383,6 +416,40 @@ func (pep *ProcExecProbe) Start(ctx context.Context) {
 			}
 		}
 	})
+	if pep.pidFilter.Enabled() && pep.rbPID != nil {
+		wg.Go(func() {
+			var event execPidEvent
+			var record ringbuf.Record
+			for {
+				if err := pep.rbPID.ReadInto(&record); err != nil {
+					if errors.Is(err, ringbuf.ErrClosed) {
+						log.Info().Msg("exec pid lifecycle ringbuf reader closed")
+						return
+					}
+					log.Warn().Err(err).Msg("failed to read from exec pid lifecycle ringbuf")
+					continue
+				}
+				if err := binary.Read(bytes.NewBuffer(record.RawSample), binary.LittleEndian, &event); err != nil {
+					log.Error().Err(err).Msg("parsing exec pid lifecycle ringbuf record")
+					continue
+				}
+
+				switch event.Type {
+				case pidEventFork:
+					if err := pep.pidFilter.Add(event.Pid); err != nil {
+						log.Warn().Err(err).Uint32("pid", event.Pid).Uint32("ppid", event.Ppid).Msg("failed to track child pid")
+						continue
+					}
+					log.Debug().Uint32("pid", event.Pid).Uint32("ppid", event.Ppid).Msg("tracked child pid")
+				case pidEventExit:
+					pep.pidFilter.Delete(event.Pid)
+					log.Debug().Uint32("pid", event.Pid).Msg("untracked exited pid")
+				default:
+					log.Warn().Uint32("type", event.Type).Uint32("pid", event.Pid).Msg("unknown pid lifecycle event")
+				}
+			}
+		})
+	}
 	wg.Wait()
 }
 
@@ -401,6 +468,12 @@ func (pep *ProcExecProbe) Close() {
 		err = pep.rbDynLib.Close()
 		if err != nil {
 			log.Error().Err(err).Msg("failed to close exec ringbuf dynlib reader")
+		}
+	}
+	if pep.rbPID != nil {
+		err = pep.rbPID.Close()
+		if err != nil {
+			log.Error().Err(err).Msg("failed to close exec ringbuf pid lifecycle reader")
 		}
 	}
 	for i, l := range pep.links {

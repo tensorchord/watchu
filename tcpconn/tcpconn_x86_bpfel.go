@@ -27,6 +27,7 @@ type tcpconnConnectMeta struct {
 const (
 	tcpconnMapEvents             = "events"
 	tcpconnMapInflightConnect    = "inflight_connect"
+	tcpconnMapTrackedPids        = "tracked_pids"
 	tcpconnProgTraceTcpClose     = "trace_tcp_close"
 	tcpconnProgTraceTcpSetState  = "trace_tcp_set_state"
 	tcpconnProgTraceTcpV4Connect = "trace_tcp_v4_connect"
@@ -87,6 +88,7 @@ type tcpconnProgramSpecs struct {
 type tcpconnMapSpecs struct {
 	Events          *ebpf.MapSpec `ebpf:"events"`
 	InflightConnect *ebpf.MapSpec `ebpf:"inflight_connect"`
+	TrackedPids     *ebpf.MapSpec `ebpf:"tracked_pids"`
 }
 
 // tcpconnVariableSpecs contains global variables before they are loaded into the kernel.
@@ -117,12 +119,14 @@ func (o *tcpconnObjects) Close() error {
 type tcpconnMaps struct {
 	Events          *ebpf.Map `ebpf:"events"`
 	InflightConnect *ebpf.Map `ebpf:"inflight_connect"`
+	TrackedPids     *ebpf.Map `ebpf:"tracked_pids"`
 }
 
 func (m *tcpconnMaps) Close() error {
 	return _TcpconnClose(
 		m.Events,
 		m.InflightConnect,
+		m.TrackedPids,
 	)
 }
 

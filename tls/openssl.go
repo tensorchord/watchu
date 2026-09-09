@@ -11,6 +11,7 @@ import (
 	"github.com/phuslu/log"
 
 	"github.com/tensorchord/watchu/internal/arch"
+	"github.com/tensorchord/watchu/internal/pidfilter"
 	"github.com/tensorchord/watchu/internal/tool"
 )
 
@@ -80,9 +81,9 @@ func findLibOpenSSLPath() (string, error) {
 	return "", fmt.Errorf("libssl not found, please set the path via args `--ssl-path`")
 }
 
-func addSSLProbe(sslPath string) ([]link.Link, *sslObjects, error) {
+func addSSLProbe(sslPath string, filter *pidfilter.Filter) ([]link.Link, *sslObjects, error) {
 	sslObjs := sslObjects{}
-	if err := loadSslObjects(&sslObjs, nil); err != nil {
+	if err := loadSslObjects(&sslObjs, filter.CollectionOptions()); err != nil {
 		return nil, nil, fmt.Errorf("failed to load/assign eBPF objects: %w", err)
 	}
 
@@ -104,8 +105,8 @@ type OpenSSLProbe struct {
 	rb    *ringbuf.Reader
 }
 
-func NewOpenSSLProbe(sslPath string) (*OpenSSLProbe, error) {
-	links, obj, err := addSSLProbe(sslPath)
+func NewOpenSSLProbe(sslPath string, filter *pidfilter.Filter) (*OpenSSLProbe, error) {
+	links, obj, err := addSSLProbe(sslPath, filter)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create OpenSSL probe: %w", err)
 	}

@@ -14,6 +14,7 @@ import (
 	"github.com/phuslu/log"
 
 	"github.com/tensorchord/watchu/export"
+	"github.com/tensorchord/watchu/internal/pidfilter"
 	"github.com/tensorchord/watchu/internal/tool"
 )
 
@@ -51,9 +52,9 @@ type PostgresProbe struct {
 	exporter *export.Exporter
 }
 
-func NewPostgresProbe(exporter *export.Exporter) *PostgresProbe {
+func NewPostgresProbe(exporter *export.Exporter, pidFilter *pidfilter.Filter) *PostgresProbe {
 	objs := pgObjects{}
-	err := loadPgObjects(&objs, nil)
+	err := loadPgObjects(&objs, pidFilter.CollectionOptions())
 	if err != nil {
 		log.Panic().Err(err).Msg("failed to load ebpf spec")
 	}
