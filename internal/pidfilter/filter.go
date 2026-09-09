@@ -21,7 +21,6 @@ const (
 )
 
 type processIdentity struct {
-	ppid      uint32
 	startTime uint64
 }
 
@@ -161,24 +160,36 @@ func (f *Filter) Close() error {
 }
 
 func (f *Filter) seed(rootPID uint32) error {
-	processes, err := readProcesses()
-	if err != nil {
-		return err
-	}
-	if rootIdentity, ok := processes[rootPID]; !ok || rootIdentity != f.rootIdentity {
+	if rootIdentity, ok := readProcessIdentity(rootPID); !ok || rootIdentity != f.rootIdentity {
 		return fmt.Errorf("root pid %d exited before pid tracking started", rootPID)
 	}
+	return f.seedProcess(rootPID, f.rootIdentity, make(map[uint32]struct{}))
+}
 
-	for _, pid := range descendants(rootPID, processes) {
-		identity := processes[pid]
-		if current, ok := readProcessIdentity(pid); !ok || current != identity {
+func (f *Filter) seedProcess(pid uint32, identity processIdentity, seen map[uint32]struct{}) error {
+	if _, ok := seen[pid]; ok {
+		return nil
+	}
+	seen[pid] = struct{}{}
+
+	if current, ok := readProcessIdentity(pid); !ok || current != identity {
+		return nil
+	}
+	if err := f.Add(pid); err != nil {
+		return fmt.Errorf("seed tracked pid %d: %w", pid, err)
+	}
+	if current, ok := readProcessIdentity(pid); !ok || current != identity {
+		f.Delete(pid)
+		return nil
+	}
+
+	for _, childPID := range readProcessChildren(pid) {
+		childIdentity, ok := readProcessIdentity(childPID)
+		if !ok {
 			continue
 		}
-		if err := f.Add(pid); err != nil {
-			return fmt.Errorf("seed tracked pid %d: %w", pid, err)
-		}
-		if current, ok := readProcessIdentity(pid); !ok || current != identity {
-			f.Delete(pid)
+		if err := f.seedProcess(childPID, childIdentity, seen); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -192,53 +203,37 @@ func (f *Filter) addToMap(pid uint32) error {
 	return nil
 }
 
-func descendants(rootPID uint32, processes map[uint32]processIdentity) []uint32 {
-	children := make(map[uint32][]uint32)
-	for pid, identity := range processes {
-		children[identity.ppid] = append(children[identity.ppid], pid)
-	}
-
-	result := []uint32{rootPID}
-	queue := []uint32{rootPID}
-	seen := map[uint32]struct{}{rootPID: {}}
-	for len(queue) > 0 {
-		pid := queue[0]
-		queue = queue[1:]
-		for _, child := range children[pid] {
-			if _, ok := seen[child]; ok {
-				continue
-			}
-			seen[child] = struct{}{}
-			result = append(result, child)
-			queue = append(queue, child)
-		}
-	}
-	return result
-}
-
-func readProcesses() (map[uint32]processIdentity, error) {
-	entries, err := os.ReadDir("/proc")
+func readProcessChildren(pid uint32) []uint32 {
+	taskPath := filepath.Join(procPath(pid), "task")
+	tasks, err := os.ReadDir(taskPath)
 	if err != nil {
-		return nil, fmt.Errorf("read /proc: %w", err)
+		return nil
 	}
 
-	processes := make(map[uint32]processIdentity)
-	for _, entry := range entries {
-		if !entry.IsDir() {
+	seen := make(map[uint32]struct{})
+	var children []uint32
+	for _, task := range tasks {
+		if !task.IsDir() {
 			continue
 		}
-		pid64, err := strconv.ParseUint(entry.Name(), 10, 32)
+		data, err := os.ReadFile(filepath.Join(taskPath, task.Name(), "children"))
 		if err != nil {
 			continue
 		}
-		pid := uint32(pid64)
-		identity, ok := readProcessIdentity(pid)
-		if !ok {
-			continue
+		for _, field := range strings.Fields(string(data)) {
+			child, err := strconv.ParseUint(field, 10, 32)
+			if err != nil {
+				continue
+			}
+			childPID := uint32(child)
+			if _, ok := seen[childPID]; ok {
+				continue
+			}
+			seen[childPID] = struct{}{}
+			children = append(children, childPID)
 		}
-		processes[pid] = identity
 	}
-	return processes, nil
+	return children
 }
 
 func readProcessIdentity(pid uint32) (processIdentity, bool) {
@@ -255,20 +250,15 @@ func parseProcessIdentity(data []byte) (processIdentity, bool) {
 		return processIdentity{}, false
 	}
 	fields := strings.Fields(string(data[commEnd+1:]))
-	// fields starts at proc(5) field 3 (state); ppid is field 4 and
-	// starttime is field 22.
+	// fields starts at proc(5) field 3 (state); starttime is field 22.
 	if len(fields) <= 19 {
-		return processIdentity{}, false
-	}
-	ppid, err := strconv.ParseUint(fields[1], 10, 32)
-	if err != nil {
 		return processIdentity{}, false
 	}
 	startTime, err := strconv.ParseUint(fields[19], 10, 64)
 	if err != nil {
 		return processIdentity{}, false
 	}
-	return processIdentity{ppid: uint32(ppid), startTime: startTime}, true
+	return processIdentity{startTime: startTime}, true
 }
 
 func procPath(pid uint32) string {

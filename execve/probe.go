@@ -96,14 +96,14 @@ type ProcExecProbe struct {
 	pidFilter  *pidfilter.Filter
 }
 
-func attachExecProbes(objs execObjects, enablePIDFilter bool) ([]link.Link, error) {
-	type tracepointProbe struct {
-		group string
-		name  string
-		prog  *ebpf.Program
-	}
+type tracepointProbe struct {
+	group string
+	name  string
+	prog  *ebpf.Program
+}
 
-	probes := []tracepointProbe{
+func execTracepointProbes(objs execObjects) []tracepointProbe {
+	return []tracepointProbe{
 		{"sched", "sched_process_exec", objs.TracepointSchedProcessExec},
 		{"syscalls", "sys_enter_openat", objs.TracepointSysEnterOpenat},
 		{"syscalls", "sys_enter_openat2", objs.TracepointSysEnterOpenat},
@@ -112,13 +112,16 @@ func attachExecProbes(objs execObjects, enablePIDFilter bool) ([]link.Link, erro
 		{"syscalls", "sys_enter_close", objs.TracepointSysEnterClose},
 		{"syscalls", "sys_enter_mmap", objs.TracepointSysEnterMmap},
 	}
-	if enablePIDFilter {
-		probes = append(probes,
-			tracepointProbe{"sched", "sched_process_fork", objs.TracepointSchedProcessFork},
-			tracepointProbe{"sched", "sched_process_exit", objs.TracepointSchedProcessExit},
-		)
-	}
+}
 
+func pidLifecycleProbes(objs execObjects) []tracepointProbe {
+	return []tracepointProbe{
+		{"sched", "sched_process_fork", objs.TracepointSchedProcessFork},
+		{"sched", "sched_process_exit", objs.TracepointSchedProcessExit},
+	}
+}
+
+func attachTracepointProbes(probes []tracepointProbe) ([]link.Link, error) {
 	failed := 0
 	links := []link.Link{}
 	for _, probe := range probes {
@@ -146,19 +149,34 @@ func NewProcExecProbe(pidFilter *pidfilter.Filter) (*ProcExecProbe, error) {
 		return nil, err
 	}
 
-	links, err := attachExecProbes(*objs, pidFilter.Enabled())
+	var links []link.Link
+	if pidFilter.Enabled() {
+		lifecycleLinks, err := attachTracepointProbes(pidLifecycleProbes(*objs))
+		if err != nil {
+			log.Error().Err(err).Msg("failed to attach pid lifecycle probes")
+			_ = objs.Close()
+			return nil, err
+		}
+		links = append(links, lifecycleLinks...)
+		if err := pidFilter.Reconcile(); err != nil {
+			for _, l := range links {
+				_ = l.Close()
+			}
+			_ = objs.Close()
+			return nil, fmt.Errorf("reconcile pid filter after attaching lifecycle probes: %w", err)
+		}
+	}
+
+	execLinks, err := attachTracepointProbes(execTracepointProbes(*objs))
 	if err != nil {
 		log.Error().Err(err).Msg("failed to attach exec probes")
-		_ = objs.Close()
-		return nil, err
-	}
-	if err := pidFilter.Reconcile(); err != nil {
 		for _, l := range links {
 			_ = l.Close()
 		}
 		_ = objs.Close()
-		return nil, fmt.Errorf("reconcile pid filter after attaching lifecycle probes: %w", err)
+		return nil, err
 	}
+	links = append(links, execLinks...)
 
 	p := &ProcExecProbe{
 		objs:       objs,

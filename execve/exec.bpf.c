@@ -14,6 +14,7 @@
 #define MAX_ARGS_LEN 2048
 #define MAX_ENTRIES 4096
 #define RING_BUFFER_SIZE (4 * 1024 * 1024) // 4 MiB
+#define PID_RING_BUFFER_SIZE 4096 // one page
 
 char __license[] SEC("license") = "Dual MIT/GPL";
 
@@ -218,7 +219,7 @@ struct {
 
 struct {
     __uint(type, BPF_MAP_TYPE_RINGBUF);
-    __uint(max_entries, RING_BUFFER_SIZE);
+    __uint(max_entries, PID_RING_BUFFER_SIZE);
 } pid_events SEC(".maps");
 
 static __always_inline u64 read_task_start_time(struct task_struct *task) {
