@@ -17,6 +17,7 @@ import (
 	"github.com/phuslu/log"
 
 	"github.com/tensorchord/watchu/export"
+	"github.com/tensorchord/watchu/internal/pidfilter"
 	"github.com/tensorchord/watchu/internal/tool"
 )
 
@@ -45,10 +46,10 @@ type event struct {
 	Daddr       [16]uint8
 }
 
-func NewTCPConnProbe(exporter *export.Exporter) (*TCPConnProbe, error) {
+func NewTCPConnProbe(exporter *export.Exporter, pidFilter *pidfilter.Filter) (*TCPConnProbe, error) {
 	objs := tcpconnObjects{}
 	var err error
-	if err := loadTcpconnObjects(&objs, nil); err != nil {
+	if err := loadTcpconnObjects(&objs, pidFilter.CollectionOptions()); err != nil {
 		return nil, fmt.Errorf("failed to load tcpconn objects: %w", err)
 	}
 

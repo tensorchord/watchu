@@ -14,6 +14,7 @@ import (
 
 	"github.com/tensorchord/watchu/execve"
 	"github.com/tensorchord/watchu/export"
+	"github.com/tensorchord/watchu/internal/pidfilter"
 	"github.com/tensorchord/watchu/internal/proc"
 	"github.com/tensorchord/watchu/internal/tool"
 )
@@ -31,9 +32,10 @@ type TLSProbe struct {
 	probes    map[proc.LibKey]TLSPlaintextProbe
 	procProbe *execve.ProcExecProbe
 	exporter  *export.Exporter
+	filter    *pidfilter.Filter
 }
 
-func NewTLSProbe(procProbe *execve.ProcExecProbe, sslPath *string, exporter *export.Exporter) *TLSProbe {
+func NewTLSProbe(procProbe *execve.ProcExecProbe, sslPath *string, exporter *export.Exporter, filter *pidfilter.Filter) *TLSProbe {
 	probes := make(map[proc.LibKey]TLSPlaintextProbe)
 
 	// OpenSSL
@@ -59,7 +61,7 @@ func NewTLSProbe(procProbe *execve.ProcExecProbe, sslPath *string, exporter *exp
 		if _, exist := probes[*key]; exist {
 			continue
 		}
-		probe, err := NewOpenSSLProbe(path)
+		probe, err := NewOpenSSLProbe(path, filter)
 		if err != nil {
 			log.Error().Err(err).Str("path", path).Msg("failed to create OpenSSL probe")
 			continue
@@ -74,6 +76,7 @@ func NewTLSProbe(procProbe *execve.ProcExecProbe, sslPath *string, exporter *exp
 		probes:    probes,
 		procProbe: procProbe,
 		exporter:  exporter,
+		filter:    filter,
 	}
 }
 
@@ -190,10 +193,10 @@ Loop:
 			var probe TLSPlaintextProbe
 			switch lib.Type {
 			case proc.TLSLibOpenSSL:
-				probe, err = NewOpenSSLProbe(lib.Path)
+				probe, err = NewOpenSSLProbe(lib.Path, sp.filter)
 				typeStr = "OpenSSL"
 			case proc.TLSLibBoringSSL:
-				probe, err = NewBoringSSLProbe(lib.Path)
+				probe, err = NewBoringSSLProbe(lib.Path, sp.filter)
 				typeStr = "BoringSSL"
 			}
 			if err != nil {

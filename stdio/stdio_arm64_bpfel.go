@@ -42,6 +42,7 @@ const (
 	stdioMapFakeEventMap          = "_fake_event_map"
 	stdioMapEvents                = "events"
 	stdioMapInflight              = "inflight"
+	stdioMapTrackedPids           = "tracked_pids"
 	stdioProgTracepointEnterRead  = "tracepoint_enter_read"
 	stdioProgTracepointEnterWrite = "tracepoint_enter_write"
 	stdioProgTracepointExitRead   = "tracepoint_exit_read"
@@ -101,6 +102,7 @@ type stdioMapSpecs struct {
 	FakeEventMap *ebpf.MapSpec `ebpf:"_fake_event_map"`
 	Events       *ebpf.MapSpec `ebpf:"events"`
 	Inflight     *ebpf.MapSpec `ebpf:"inflight"`
+	TrackedPids  *ebpf.MapSpec `ebpf:"tracked_pids"`
 }
 
 // stdioVariableSpecs contains global variables before they are loaded into the kernel.
@@ -132,6 +134,7 @@ type stdioMaps struct {
 	FakeEventMap *ebpf.Map `ebpf:"_fake_event_map"`
 	Events       *ebpf.Map `ebpf:"events"`
 	Inflight     *ebpf.Map `ebpf:"inflight"`
+	TrackedPids  *ebpf.Map `ebpf:"tracked_pids"`
 }
 
 func (m *stdioMaps) Close() error {
@@ -139,6 +142,7 @@ func (m *stdioMaps) Close() error {
 		m.FakeEventMap,
 		m.Events,
 		m.Inflight,
+		m.TrackedPids,
 	)
 }
 

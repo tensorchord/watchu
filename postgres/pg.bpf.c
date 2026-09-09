@@ -6,6 +6,7 @@
 #include "bpf_core_read.h"
 #include "bpf_helpers.h"
 #include "bpf_tracing.h"
+#include "pid_filter.h"
 #include "vm_used.h"
 
 #define TASK_COMM_LEN 16
@@ -157,6 +158,9 @@ static __always_inline int emit_pg_event(
 
 SEC("tracepoint/syscalls/sys_enter_sendto")
 int tracepoint_enter_sendto(struct sendto_ctx *ctx) {
+    if (!should_trace_current_pid())
+        return 0;
+
     u64 pid_tgid        = bpf_get_current_pid_tgid();
     struct conn_key key = {
         .pid_tgid = pid_tgid,
@@ -212,6 +216,9 @@ int tracepoint_enter_sendto(struct sendto_ctx *ctx) {
 
 SEC("tracepoint/syscalls/sys_enter_close")
 int tracepoint_enter_close(struct close_ctx *ctx) {
+    if (!should_trace_current_pid())
+        return 0;
+
     u64 pid_tgid        = bpf_get_current_pid_tgid();
     struct conn_key key = {
         .pid_tgid = pid_tgid,

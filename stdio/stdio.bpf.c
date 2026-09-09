@@ -6,6 +6,7 @@
 #include "bpf_core_read.h"
 #include "bpf_helpers.h"
 #include "bpf_tracing.h"
+#include "pid_filter.h"
 
 #define MAX_ENTRIES 10240
 #define TASK_COMM_LEN 16
@@ -100,6 +101,10 @@ static __always_inline u8 is_mcp_json_str(const char *buf, u32 len) {
 }
 
 static __always_inline int emit_stdio_event(const void *buf, u64 req_len, u32 data_len, u64 fd, u8 rw) {
+    if (!should_trace_current_pid()) {
+        return 0;
+    }
+
     struct event *evt = bpf_ringbuf_reserve(&events, sizeof(*evt), 0);
     if (!evt) {
         return 0;
@@ -122,6 +127,9 @@ static __always_inline int emit_stdio_event(const void *buf, u64 req_len, u32 da
 
 SEC("tracepoint/syscalls/sys_enter_read")
 int tracepoint_enter_read(struct enter_ctx *ctx) {
+    if (!should_trace_current_pid()) {
+        return 0;
+    }
     if (ctx->count == 0) {
         return 0;
     }
@@ -167,6 +175,9 @@ cleanup:
 
 SEC("tracepoint/syscalls/sys_enter_write")
 int tracepoint_enter_write(struct enter_ctx *ctx) {
+    if (!should_trace_current_pid()) {
+        return 0;
+    }
     if (ctx->count == 0) {
         return 0;
     }

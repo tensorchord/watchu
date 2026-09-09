@@ -20,6 +20,7 @@ import (
 	"github.com/phuslu/log"
 
 	"github.com/tensorchord/watchu/export"
+	"github.com/tensorchord/watchu/internal/pidfilter"
 	"github.com/tensorchord/watchu/internal/tool"
 )
 
@@ -88,12 +89,14 @@ type ProcExecProbe struct {
 	DynLibChan chan *DynLib
 }
 
-func attachExecProbes(objs execObjects) ([]link.Link, error) {
-	probes := []struct {
-		group string
-		name  string
-		prog  *ebpf.Program
-	}{
+type tracepointProbe struct {
+	group string
+	name  string
+	prog  *ebpf.Program
+}
+
+func execTracepointProbes(objs execObjects) []tracepointProbe {
+	return []tracepointProbe{
 		{"sched", "sched_process_exec", objs.TracepointSchedProcessExec},
 		{"syscalls", "sys_enter_openat", objs.TracepointSysEnterOpenat},
 		{"syscalls", "sys_enter_openat2", objs.TracepointSysEnterOpenat},
@@ -102,7 +105,16 @@ func attachExecProbes(objs execObjects) ([]link.Link, error) {
 		{"syscalls", "sys_enter_close", objs.TracepointSysEnterClose},
 		{"syscalls", "sys_enter_mmap", objs.TracepointSysEnterMmap},
 	}
+}
 
+func pidLifecycleProbes(objs execObjects) []tracepointProbe {
+	return []tracepointProbe{
+		{"sched", "sched_process_fork", objs.TracepointSchedProcessFork},
+		{"sched", "sched_process_exit", objs.TracepointSchedProcessExit},
+	}
+}
+
+func attachTracepointProbes(probes []tracepointProbe) ([]link.Link, error) {
 	failed := 0
 	links := []link.Link{}
 	for _, probe := range probes {
@@ -123,18 +135,41 @@ func attachExecProbes(objs execObjects) ([]link.Link, error) {
 	return links, nil
 }
 
-func NewProcExecProbe() (*ProcExecProbe, error) {
+func NewProcExecProbe(pidFilter *pidfilter.Filter) (*ProcExecProbe, error) {
 	objs := &execObjects{}
-	if err := loadExecObjects(objs, nil); err != nil {
+	if err := loadExecObjects(objs, pidFilter.CollectionOptions()); err != nil {
 		log.Error().Err(err).Msg("failed to load eBPF exec spec")
 		return nil, err
 	}
 
-	links, err := attachExecProbes(*objs)
+	var links []link.Link
+	if pidFilter.Enabled() {
+		lifecycleLinks, err := attachTracepointProbes(pidLifecycleProbes(*objs))
+		if err != nil {
+			log.Error().Err(err).Msg("failed to attach pid lifecycle probes")
+			_ = objs.Close()
+			return nil, err
+		}
+		links = append(links, lifecycleLinks...)
+		if err := pidFilter.Reconcile(); err != nil {
+			for _, l := range links {
+				_ = l.Close()
+			}
+			_ = objs.Close()
+			return nil, fmt.Errorf("reconcile pid filter after attaching lifecycle probes: %w", err)
+		}
+	}
+
+	execLinks, err := attachTracepointProbes(execTracepointProbes(*objs))
 	if err != nil {
 		log.Error().Err(err).Msg("failed to attach exec probes")
+		for _, l := range links {
+			_ = l.Close()
+		}
+		_ = objs.Close()
 		return nil, err
 	}
+	links = append(links, execLinks...)
 
 	p := &ProcExecProbe{
 		objs:       objs,

@@ -6,6 +6,7 @@
 #include "bpf_core_read.h"
 #include "bpf_helpers.h"
 #include "bpf_tracing.h"
+#include "pid_filter.h"
 
 #define LIBSSL_LEN 6
 #define TASK_COMM_LEN 16
@@ -23,9 +24,18 @@ struct mm_struct {
     unsigned long arg_end;
 } __attribute__((preserve_access_index));
 
+typedef struct {
+    int counter;
+} atomic_t;
+
+struct signal_struct {
+    atomic_t live;
+} __attribute__((preserve_access_index));
+
 struct task_struct {
     struct task_struct *real_parent;
     struct mm_struct *mm;
+    struct signal_struct *signal;
     pid_t tgid;
     u64 start_boottime;
     u64 start_time;
@@ -39,6 +49,23 @@ struct sched_process_ctx {
                   // size)
     s32 pid;
     s32 old_pid;
+};
+
+// ref: /sys/kernel/debug/tracing/events/sched/sched_process_fork/format
+struct sched_process_fork_ctx {
+    long common;
+    char parent_comm[TASK_COMM_LEN];
+    s32 parent_pid;
+    char child_comm[TASK_COMM_LEN];
+    s32 child_pid;
+};
+
+// ref: /sys/kernel/debug/tracing/events/sched/sched_process_exit/format
+struct sched_process_exit_ctx {
+    long common;
+    char comm[TASK_COMM_LEN];
+    s32 pid;
+    int prio;
 };
 
 // ref: /sys/kernel/debug/tracing/events/syscalls/sys_enter_openat/format
@@ -170,6 +197,32 @@ struct {
     __uint(max_entries, RING_BUFFER_SIZE);
 } dynlib_events SEC(".maps");
 
+enum pid_event_type {
+    PID_EVENT_FORK = 1,
+    PID_EVENT_EXIT = 2,
+};
+
+struct pid_event {
+    u32 type;
+    u32 pid;
+    u32 ppid;
+};
+
+// used to make the bpf2go generate pid_event struct
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, u32);
+    __type(value, struct pid_event);
+} _fake_pid_event_map SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, u32);
+    __type(value, struct pid_event);
+} pid_events SEC(".maps");
+
 static __always_inline u64 read_task_start_time(struct task_struct *task) {
     if (task == NULL)
         return 0;
@@ -208,9 +261,48 @@ static __always_inline void read_exec_args(struct exec_value *value) {
     value->proc.args_len = args_len;
 }
 
+SEC("tracepoint/sched/sched_process_fork")
+int tracepoint_sched_process_fork(struct sched_process_fork_ctx *ctx) {
+    if (!pid_filter_enabled())
+        return 0;
+
+    u32 parent_tgid = (u32)(bpf_get_current_pid_tgid() >> 32);
+    u32 child_pid   = (u32)ctx->child_pid;
+    if (!pid_filter_contains(parent_tgid))
+        return 0;
+
+    pid_filter_track(child_pid);
+    return 0;
+}
+
+SEC("tracepoint/sched/sched_process_exit")
+int tracepoint_sched_process_exit(struct sched_process_exit_ctx *ctx) {
+    if (!pid_filter_enabled())
+        return 0;
+
+    u32 pid  = (u32)ctx->pid;
+    u32 tgid = (u32)(bpf_get_current_pid_tgid() >> 32);
+
+    // sched_process_exit fires for every thread. Thread IDs are added by the
+    // fork tracepoint, so remove those individually without dropping the TGID
+    // while other threads in the process are still alive.
+    if (pid != tgid && pid_filter_contains(pid)) {
+        pid_filter_untrack(pid);
+    }
+
+    struct task_struct *task = bpf_get_current_task_btf();
+    int live                 = BPF_CORE_READ(task, signal, live.counter);
+    if (live == 0 && pid_filter_contains(tgid)) {
+        pid_filter_untrack(tgid);
+    }
+    return 0;
+}
+
 SEC("tracepoint/sched/sched_process_exec")
 int tracepoint_sched_process_exec(struct sched_process_ctx *ctx) {
     if (ctx->pid == 0)
+        return 0;
+    if (!should_trace_pid((u32)ctx->pid))
         return 0;
 
     u32 zero = 0;
@@ -266,6 +358,9 @@ static __always_inline int is_libssl(const char *name) {
 
 SEC("tracepoint/syscalls/sys_enter_openat")
 int tracepoint_sys_enter_openat(struct openat_ctx *ctx) {
+    if (!should_trace_current_pid())
+        return 0;
+
     struct open_value ov = {.filename = {}};
     int length           = bpf_probe_read_user_str(ov.filename, MAX_FILENAME_LEN, (void *)ctx->filename);
     if (length <= 0)
@@ -300,6 +395,9 @@ cleanup:
 
 SEC("tracepoint/syscalls/sys_enter_mmap")
 int tracepoint_sys_enter_mmap(struct mmap_ctx *ctx) {
+    if (!should_trace_current_pid())
+        return 0;
+
     struct open_key key = {
         .fd       = ctx->fd,
         .pid_tgid = bpf_get_current_pid_tgid(),
@@ -326,6 +424,9 @@ int tracepoint_sys_enter_mmap(struct mmap_ctx *ctx) {
 
 SEC("tracepoint/syscalls/sys_enter_close")
 int tracepoint_sys_enter_close(struct close_ctx *ctx) {
+    if (!should_trace_current_pid())
+        return 0;
+
     struct open_key key = {
         .fd       = ctx->fd,
         .pid_tgid = bpf_get_current_pid_tgid(),

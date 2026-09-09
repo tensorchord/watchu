@@ -13,6 +13,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/tensorchord/watchu/internal/arch"
+	"github.com/tensorchord/watchu/internal/pidfilter"
 )
 
 var (
@@ -26,8 +27,8 @@ type BoringSSLProbe struct {
 	rb    *ringbuf.Reader
 }
 
-func NewBoringSSLProbe(path string) (*BoringSSLProbe, error) {
-	links, obj, err := addBoringProbe(path)
+func NewBoringSSLProbe(path string, filter *pidfilter.Filter) (*BoringSSLProbe, error) {
+	links, obj, err := addBoringProbe(path, filter)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create BoringSSL probe: %w", err)
 	}
@@ -65,9 +66,9 @@ func (bp *BoringSSLProbe) Close() error {
 	return final
 }
 
-func addBoringProbe(path string) ([]link.Link, *boringObjects, error) {
+func addBoringProbe(path string, filter *pidfilter.Filter) ([]link.Link, *boringObjects, error) {
 	objs := boringObjects{}
-	if err := loadBoringObjects(&objs, nil); err != nil {
+	if err := loadBoringObjects(&objs, filter.CollectionOptions()); err != nil {
 		return nil, nil, fmt.Errorf("failed to load/assign eBPF BoringSSL objects: %w", err)
 	}
 	exec, err := link.OpenExecutable(path)

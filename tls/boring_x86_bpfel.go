@@ -42,6 +42,7 @@ const (
 	boringMapFakeEventMap              = "_fake_event_map"
 	boringMapEvents                    = "events"
 	boringMapStartMap                  = "start_map"
+	boringMapTrackedPids               = "tracked_pids"
 	boringProgProbeBoringSslReadEntry  = "probe_boring_ssl_read_entry"
 	boringProgProbeBoringSslReadExit   = "probe_boring_ssl_read_exit"
 	boringProgProbeBoringSslWriteEntry = "probe_boring_ssl_write_entry"
@@ -103,6 +104,7 @@ type boringMapSpecs struct {
 	FakeEventMap *ebpf.MapSpec `ebpf:"_fake_event_map"`
 	Events       *ebpf.MapSpec `ebpf:"events"`
 	StartMap     *ebpf.MapSpec `ebpf:"start_map"`
+	TrackedPids  *ebpf.MapSpec `ebpf:"tracked_pids"`
 }
 
 // boringVariableSpecs contains global variables before they are loaded into the kernel.
@@ -134,6 +136,7 @@ type boringMaps struct {
 	FakeEventMap *ebpf.Map `ebpf:"_fake_event_map"`
 	Events       *ebpf.Map `ebpf:"events"`
 	StartMap     *ebpf.Map `ebpf:"start_map"`
+	TrackedPids  *ebpf.Map `ebpf:"tracked_pids"`
 }
 
 func (m *boringMaps) Close() error {
@@ -141,6 +144,7 @@ func (m *boringMaps) Close() error {
 		m.FakeEventMap,
 		m.Events,
 		m.StartMap,
+		m.TrackedPids,
 	)
 }
 
