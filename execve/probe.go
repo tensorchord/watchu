@@ -436,13 +436,10 @@ func (pep *ProcExecProbe) Start(ctx context.Context) {
 
 				switch event.Type {
 				case pidEventFork:
-					if err := pep.pidFilter.Add(event.Pid); err != nil {
-						log.Warn().Err(err).Uint32("pid", event.Pid).Uint32("ppid", event.Ppid).Msg("failed to track child pid")
-						continue
-					}
+					pep.pidFilter.RecordAdd(event.Pid)
 					log.Debug().Uint32("pid", event.Pid).Uint32("ppid", event.Ppid).Msg("tracked child pid")
 				case pidEventExit:
-					pep.pidFilter.Delete(event.Pid)
+					pep.pidFilter.RecordDelete(event.Pid)
 					log.Debug().Uint32("pid", event.Pid).Msg("untracked exited pid")
 				default:
 					log.Warn().Uint32("type", event.Type).Uint32("pid", event.Pid).Msg("unknown pid lifecycle event")

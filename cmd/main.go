@@ -119,6 +119,10 @@ func main() {
 }
 
 func run(ctx context.Context, cfg CmdConfig) error {
+	if cfg.pid < 0 {
+		return fmt.Errorf("pid must not be negative")
+	}
+
 	exporter, err := export.NewExporter(ctx, cfg.exportTarget)
 	if err != nil {
 		return fmt.Errorf("initialize exporter: %w", err)

@@ -17,23 +17,34 @@ const (
 	sentinelKey = uint32(0)
 	mapName     = "tracked_pids"
 	maxEntries  = 65536
+	noPrealloc  = 1 // BPF_F_NO_PREALLOC
 )
 
+type processIdentity struct {
+	ppid      uint32
+	startTime uint64
+}
+
 type Filter struct {
-	mu      sync.RWMutex
-	rootPID uint32
-	pids    map[uint32]struct{}
-	m       *ebpf.Map
+	mu           sync.RWMutex
+	rootPID      uint32
+	rootIdentity processIdentity
+	pids         map[uint32]struct{}
+	m            *ebpf.Map
 }
 
 func New(rootPID int) (*Filter, error) {
 	if rootPID <= 0 {
 		return nil, fmt.Errorf("pid must be greater than 0")
 	}
+	if uint64(rootPID) > uint64(^uint32(0)) {
+		return nil, fmt.Errorf("pid %d exceeds the supported maximum", rootPID)
+	}
 
 	pid := uint32(rootPID)
-	if _, err := os.Stat(procPath(pid)); err != nil {
-		return nil, fmt.Errorf("pid %d is not visible in /proc: %w", pid, err)
+	rootIdentity, ok := readProcessIdentity(pid)
+	if !ok {
+		return nil, fmt.Errorf("pid %d is not visible in /proc", pid)
 	}
 
 	m, err := ebpf.NewMap(&ebpf.MapSpec{
@@ -42,30 +53,28 @@ func New(rootPID int) (*Filter, error) {
 		KeySize:    4,
 		ValueSize:  1,
 		MaxEntries: maxEntries,
+		Flags:      noPrealloc,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create pid filter map: %w", err)
 	}
 
 	f := &Filter{
-		rootPID: pid,
-		pids:    make(map[uint32]struct{}),
-		m:       m,
+		rootPID:      pid,
+		rootIdentity: rootIdentity,
+		pids:         make(map[uint32]struct{}),
+		m:            m,
 	}
 	if err := f.addToMap(sentinelKey); err != nil {
 		_ = m.Close()
 		return nil, fmt.Errorf("enable pid filter map: %w", err)
 	}
-	if err := f.seed(pid); err != nil {
-		_ = m.Close()
-		return nil, err
-	}
 	return f, nil
 }
 
-// Reconcile discovers descendants that may have forked while the lifecycle
-// tracepoints were being attached. It only adds entries: the eBPF lifecycle
-// tracker remains the source of truth for removing exited processes.
+// Reconcile seeds the root and its current descendants after the lifecycle
+// tracepoints are attached. Identity checks on both sides of each map update
+// prevent an exit or PID reuse during the /proc scan from leaving a stale PID.
 func (f *Filter) Reconcile() error {
 	if f == nil {
 		return nil
@@ -102,12 +111,32 @@ func (f *Filter) Add(pid uint32) error {
 	return nil
 }
 
+// RecordAdd mirrors an update already performed by the eBPF lifecycle hook.
+func (f *Filter) RecordAdd(pid uint32) {
+	if f == nil || pid == sentinelKey {
+		return
+	}
+	f.mu.Lock()
+	f.pids[pid] = struct{}{}
+	f.mu.Unlock()
+}
+
 func (f *Filter) Delete(pid uint32) {
 	if f == nil || pid == sentinelKey {
 		return
 	}
 
 	if err := f.m.Delete(pid); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
+		return
+	}
+	f.mu.Lock()
+	delete(f.pids, pid)
+	f.mu.Unlock()
+}
+
+// RecordDelete mirrors an update already performed by the eBPF lifecycle hook.
+func (f *Filter) RecordDelete(pid uint32) {
+	if f == nil || pid == sentinelKey {
 		return
 	}
 	f.mu.Lock()
@@ -132,13 +161,24 @@ func (f *Filter) Close() error {
 }
 
 func (f *Filter) seed(rootPID uint32) error {
-	descendants, err := currentDescendants(rootPID)
+	processes, err := readProcesses()
 	if err != nil {
 		return err
 	}
-	for _, pid := range descendants {
+	if rootIdentity, ok := processes[rootPID]; !ok || rootIdentity != f.rootIdentity {
+		return fmt.Errorf("root pid %d exited before pid tracking started", rootPID)
+	}
+
+	for _, pid := range descendants(rootPID, processes) {
+		identity := processes[pid]
+		if current, ok := readProcessIdentity(pid); !ok || current != identity {
+			continue
+		}
 		if err := f.Add(pid); err != nil {
 			return fmt.Errorf("seed tracked pid %d: %w", pid, err)
+		}
+		if current, ok := readProcessIdentity(pid); !ok || current != identity {
+			f.Delete(pid)
 		}
 	}
 	return nil
@@ -152,19 +192,10 @@ func (f *Filter) addToMap(pid uint32) error {
 	return nil
 }
 
-func currentDescendants(rootPID uint32) ([]uint32, error) {
-	parents, err := readProcParents()
-	if err != nil {
-		return nil, err
-	}
-
-	return descendants(rootPID, parents), nil
-}
-
-func descendants(rootPID uint32, parents map[uint32]uint32) []uint32 {
+func descendants(rootPID uint32, processes map[uint32]processIdentity) []uint32 {
 	children := make(map[uint32][]uint32)
-	for pid, ppid := range parents {
-		children[ppid] = append(children[ppid], pid)
+	for pid, identity := range processes {
+		children[identity.ppid] = append(children[identity.ppid], pid)
 	}
 
 	result := []uint32{rootPID}
@@ -185,13 +216,13 @@ func descendants(rootPID uint32, parents map[uint32]uint32) []uint32 {
 	return result
 }
 
-func readProcParents() (map[uint32]uint32, error) {
+func readProcesses() (map[uint32]processIdentity, error) {
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
 		return nil, fmt.Errorf("read /proc: %w", err)
 	}
 
-	parents := make(map[uint32]uint32)
+	processes := make(map[uint32]processIdentity)
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
@@ -201,32 +232,43 @@ func readProcParents() (map[uint32]uint32, error) {
 			continue
 		}
 		pid := uint32(pid64)
-		ppid, ok := readProcPPID(pid)
+		identity, ok := readProcessIdentity(pid)
 		if !ok {
 			continue
 		}
-		parents[pid] = ppid
+		processes[pid] = identity
 	}
-	return parents, nil
+	return processes, nil
 }
 
-func readProcPPID(pid uint32) (uint32, bool) {
-	data, err := os.ReadFile(filepath.Join(procPath(pid), "status"))
+func readProcessIdentity(pid uint32) (processIdentity, bool) {
+	data, err := os.ReadFile(filepath.Join(procPath(pid), "stat"))
 	if err != nil {
-		return 0, false
+		return processIdentity{}, false
 	}
-	for _, line := range bytes.Split(data, []byte{'\n'}) {
-		key, value, ok := bytes.Cut(line, []byte{':'})
-		if !ok || string(key) != "PPid" {
-			continue
-		}
-		ppid64, err := strconv.ParseUint(strings.TrimSpace(string(value)), 10, 32)
-		if err != nil {
-			return 0, false
-		}
-		return uint32(ppid64), true
+	return parseProcessIdentity(data)
+}
+
+func parseProcessIdentity(data []byte) (processIdentity, bool) {
+	commEnd := bytes.LastIndexByte(data, ')')
+	if commEnd < 0 {
+		return processIdentity{}, false
 	}
-	return 0, false
+	fields := strings.Fields(string(data[commEnd+1:]))
+	// fields starts at proc(5) field 3 (state); ppid is field 4 and
+	// starttime is field 22.
+	if len(fields) <= 19 {
+		return processIdentity{}, false
+	}
+	ppid, err := strconv.ParseUint(fields[1], 10, 32)
+	if err != nil {
+		return processIdentity{}, false
+	}
+	startTime, err := strconv.ParseUint(fields[19], 10, 64)
+	if err != nil {
+		return processIdentity{}, false
+	}
+	return processIdentity{ppid: uint32(ppid), startTime: startTime}, true
 }
 
 func procPath(pid uint32) string {

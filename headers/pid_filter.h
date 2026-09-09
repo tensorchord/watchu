@@ -6,10 +6,12 @@
 
 #define PID_FILTER_SENTINEL_KEY 0
 #define PID_FILTER_MAX_ENTRIES 65536
+#define PID_FILTER_MAP_FLAGS 1 // BPF_F_NO_PREALLOC
 
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, PID_FILTER_MAX_ENTRIES);
+    __uint(map_flags, PID_FILTER_MAP_FLAGS);
     __type(key, u32);
     __type(value, u8);
 } tracked_pids SEC(".maps");
