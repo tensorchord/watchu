@@ -110,32 +110,12 @@ func (f *Filter) Add(pid uint32) error {
 	return nil
 }
 
-// RecordAdd mirrors an update already performed by the eBPF lifecycle hook.
-func (f *Filter) RecordAdd(pid uint32) {
-	if f == nil || pid == sentinelKey {
-		return
-	}
-	f.mu.Lock()
-	f.pids[pid] = struct{}{}
-	f.mu.Unlock()
-}
-
 func (f *Filter) Delete(pid uint32) {
 	if f == nil || pid == sentinelKey {
 		return
 	}
 
 	if err := f.m.Delete(pid); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
-		return
-	}
-	f.mu.Lock()
-	delete(f.pids, pid)
-	f.mu.Unlock()
-}
-
-// RecordDelete mirrors an update already performed by the eBPF lifecycle hook.
-func (f *Filter) RecordDelete(pid uint32) {
-	if f == nil || pid == sentinelKey {
 		return
 	}
 	f.mu.Lock()

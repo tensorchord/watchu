@@ -14,7 +14,6 @@
 #define MAX_ARGS_LEN 2048
 #define MAX_ENTRIES 4096
 #define RING_BUFFER_SIZE (4 * 1024 * 1024) // 4 MiB
-#define PID_RING_BUFFER_SIZE 4096 // one page
 
 char __license[] SEC("license") = "Dual MIT/GPL";
 
@@ -218,8 +217,10 @@ struct {
 } _fake_pid_event_map SEC(".maps");
 
 struct {
-    __uint(type, BPF_MAP_TYPE_RINGBUF);
-    __uint(max_entries, PID_RING_BUFFER_SIZE);
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, u32);
+    __type(value, struct pid_event);
 } pid_events SEC(".maps");
 
 static __always_inline u64 read_task_start_time(struct task_struct *task) {
@@ -260,17 +261,6 @@ static __always_inline void read_exec_args(struct exec_value *value) {
     value->proc.args_len = args_len;
 }
 
-static __always_inline void emit_pid_event(u32 type, u32 pid, u32 ppid) {
-    struct pid_event *evt = bpf_ringbuf_reserve(&pid_events, sizeof(*evt), 0);
-    if (!evt)
-        return;
-
-    evt->type = type;
-    evt->pid  = pid;
-    evt->ppid = ppid;
-    bpf_ringbuf_submit(evt, 0);
-}
-
 SEC("tracepoint/sched/sched_process_fork")
 int tracepoint_sched_process_fork(struct sched_process_fork_ctx *ctx) {
     if (!pid_filter_enabled())
@@ -282,7 +272,6 @@ int tracepoint_sched_process_fork(struct sched_process_fork_ctx *ctx) {
         return 0;
 
     pid_filter_track(child_pid);
-    emit_pid_event(PID_EVENT_FORK, child_pid, parent_tgid);
     return 0;
 }
 
@@ -299,14 +288,12 @@ int tracepoint_sched_process_exit(struct sched_process_exit_ctx *ctx) {
     // while other threads in the process are still alive.
     if (pid != tgid && pid_filter_contains(pid)) {
         pid_filter_untrack(pid);
-        emit_pid_event(PID_EVENT_EXIT, pid, 0);
     }
 
     struct task_struct *task = bpf_get_current_task_btf();
     int live                 = BPF_CORE_READ(task, signal, live.counter);
     if (live == 0 && pid_filter_contains(tgid)) {
         pid_filter_untrack(tgid);
-        emit_pid_event(PID_EVENT_EXIT, tgid, 0);
     }
     return 0;
 }

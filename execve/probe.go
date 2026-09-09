@@ -29,11 +29,6 @@ import (
 const procChannelSize = 4096
 
 const (
-	pidEventFork = 1
-	pidEventExit = 2
-)
-
-const (
 	procCmdlinePath = "/proc/%d/cmdline"
 	procCWDPath     = "/proc/%d/cwd"
 	maxArgsLen      = 2048
@@ -87,13 +82,11 @@ func (e *ExecEvent) ToRawExec() *export.RawExec {
 type ProcExecProbe struct {
 	rbProc     *ringbuf.Reader
 	rbDynLib   *ringbuf.Reader
-	rbPID      *ringbuf.Reader
 	objs       *execObjects
 	links      []link.Link
 	ProcChan   chan int32
 	ExecChan   chan *ExecEvent
 	DynLibChan chan *DynLib
-	pidFilter  *pidfilter.Filter
 }
 
 type tracepointProbe struct {
@@ -184,7 +177,6 @@ func NewProcExecProbe(pidFilter *pidfilter.Filter) (*ProcExecProbe, error) {
 		ProcChan:   make(chan int32, procChannelSize),
 		ExecChan:   make(chan *ExecEvent, procChannelSize),
 		DynLibChan: make(chan *DynLib, procChannelSize),
-		pidFilter:  pidFilter,
 	}
 	p.rbProc, err = ringbuf.NewReader(objs.ProcEvents)
 	if err != nil {
@@ -197,14 +189,6 @@ func NewProcExecProbe(pidFilter *pidfilter.Filter) (*ProcExecProbe, error) {
 		log.Error().Err(err).Msg("failed to open ringbuf reader for dynamic library load")
 		p.Close()
 		return nil, err
-	}
-	if pidFilter.Enabled() {
-		p.rbPID, err = ringbuf.NewReader(objs.PidEvents)
-		if err != nil {
-			log.Error().Err(err).Msg("failed to open ringbuf reader for pid lifecycle")
-			p.Close()
-			return nil, err
-		}
 	}
 	return p, nil
 }
@@ -434,37 +418,6 @@ func (pep *ProcExecProbe) Start(ctx context.Context) {
 			}
 		}
 	})
-	if pep.pidFilter.Enabled() && pep.rbPID != nil {
-		wg.Go(func() {
-			var event execPidEvent
-			var record ringbuf.Record
-			for {
-				if err := pep.rbPID.ReadInto(&record); err != nil {
-					if errors.Is(err, ringbuf.ErrClosed) {
-						log.Info().Msg("exec pid lifecycle ringbuf reader closed")
-						return
-					}
-					log.Warn().Err(err).Msg("failed to read from exec pid lifecycle ringbuf")
-					continue
-				}
-				if err := binary.Read(bytes.NewBuffer(record.RawSample), binary.LittleEndian, &event); err != nil {
-					log.Error().Err(err).Msg("parsing exec pid lifecycle ringbuf record")
-					continue
-				}
-
-				switch event.Type {
-				case pidEventFork:
-					pep.pidFilter.RecordAdd(event.Pid)
-					log.Debug().Uint32("pid", event.Pid).Uint32("ppid", event.Ppid).Msg("tracked child pid")
-				case pidEventExit:
-					pep.pidFilter.RecordDelete(event.Pid)
-					log.Debug().Uint32("pid", event.Pid).Msg("untracked exited pid")
-				default:
-					log.Warn().Uint32("type", event.Type).Uint32("pid", event.Pid).Msg("unknown pid lifecycle event")
-				}
-			}
-		})
-	}
 	wg.Wait()
 }
 
@@ -483,12 +436,6 @@ func (pep *ProcExecProbe) Close() {
 		err = pep.rbDynLib.Close()
 		if err != nil {
 			log.Error().Err(err).Msg("failed to close exec ringbuf dynlib reader")
-		}
-	}
-	if pep.rbPID != nil {
-		err = pep.rbPID.Close()
-		if err != nil {
-			log.Error().Err(err).Msg("failed to close exec ringbuf pid lifecycle reader")
 		}
 	}
 	for i, l := range pep.links {
