@@ -8,14 +8,14 @@ require (
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/cilium/ebpf v0.22.0
 	github.com/google/uuid v1.6.0
-	github.com/klauspost/compress v1.19.2
+	github.com/klauspost/compress v1.20.0
 	github.com/maypok86/otter/v2 v2.3.0
-	github.com/phuslu/log v1.0.128
+	github.com/phuslu/log v1.0.134
 	github.com/tidwall/gjson v1.19.0
 	go.opentelemetry.io/proto/otlp v1.11.0
-	golang.org/x/net v0.58.0
-	golang.org/x/sys v0.47.0
-	google.golang.org/grpc v1.83.0
+	golang.org/x/net v0.59.0
+	golang.org/x/sys v0.48.0
+	google.golang.org/grpc v1.83.2
 	google.golang.org/protobuf v1.36.12
 )
 
@@ -44,7 +44,7 @@ require (
 	github.com/tidwall/match v1.2.0 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
-	golang.org/x/text v0.41.0 // indirect
+	golang.org/x/text v0.42.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260720211330-0afa2a65878a // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260720211330-0afa2a65878a // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
