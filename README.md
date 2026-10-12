@@ -56,6 +56,12 @@ Export events to a local JSONL file:
 sudo ./bin/app -export file:///tmp/watchu.jsonl
 ```
 
+Trace only a host process and its children:
+
+```bash
+sudo ./bin/app -pid 1234
+```
+
 ## Docker Quick Start
 
 Build the image:

@@ -32,6 +32,9 @@ struct {
 
 SEC("uprobe/boring_ssl_read_entry")
 int probe_boring_ssl_read_entry(struct pt_regs *ctx) {
+    if (!should_trace_current_pid())
+        return 0;
+
     struct call_info info = new_call_info(ctx);
     u64 key               = bpf_get_current_pid_tgid();
     bpf_map_update_elem(&start_map, &key, &info, BPF_ANY);
@@ -40,6 +43,9 @@ int probe_boring_ssl_read_entry(struct pt_regs *ctx) {
 
 SEC("uprobe/boring_ssl_write_entry")
 int probe_boring_ssl_write_entry(struct pt_regs *ctx) {
+    if (!should_trace_current_pid())
+        return 0;
+
     struct call_info info = new_call_info(ctx);
     u64 key               = bpf_get_current_pid_tgid();
     bpf_map_update_elem(&start_map, &key, &info, BPF_ANY);

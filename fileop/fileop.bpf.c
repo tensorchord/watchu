@@ -4,6 +4,7 @@
 
 #include "common.h"
 #include "bpf_helpers.h"
+#include "pid_filter.h"
 
 #define TASK_COMM_LEN 16
 #define MAX_PATH_SIZE 256
@@ -466,6 +467,9 @@ static __always_inline void set_seen_flag(struct path_value *path, u8 flag) {
 static __always_inline int submit_fd_event(struct path_value *path, u8 op, u64 bytes) {
     struct event *evt;
 
+    if (!should_trace_current_pid()) {
+        return 0;
+    }
     if (should_drop_fd_event(path, op)) {
         return 0;
     }
@@ -498,6 +502,10 @@ static __always_inline int submit_delete_path(const char *path, long dirfd) {
     struct event *evt;
     u32 tgid = (u32)(bpf_get_current_pid_tgid() >> 32);
 
+    if (!should_trace_pid(tgid)) {
+        return 0;
+    }
+
     evt = bpf_ringbuf_reserve(&events, sizeof(*evt), 0);
     if (!evt) {
         return 0;
@@ -525,6 +533,10 @@ static __always_inline int submit_delete_path(const char *path, long dirfd) {
 static __noinline int submit_rename_paths(const char *old_path, long old_dirfd, const char *new_path) {
     struct event *evt;
     u32 tgid = (u32)(bpf_get_current_pid_tgid() >> 32);
+
+    if (!should_trace_pid(tgid)) {
+        return 0;
+    }
 
     evt = bpf_ringbuf_reserve(&events, sizeof(*evt), 0);
     if (!evt) {
@@ -566,6 +578,10 @@ static __noinline int submit_hardlink_paths(const char *old_path, long old_dirfd
     struct event *evt;
     u32 tgid = (u32)(bpf_get_current_pid_tgid() >> 32);
 
+    if (!should_trace_pid(tgid)) {
+        return 0;
+    }
+
     evt = bpf_ringbuf_reserve(&events, sizeof(*evt), 0);
     if (!evt) {
         return 0;
@@ -604,6 +620,10 @@ static __noinline int submit_hardlink_paths(const char *old_path, long old_dirfd
 static __noinline int submit_symlink_paths(const char *old_path, const char *new_path, long new_dirfd) {
     struct event *evt;
     u32 tgid = (u32)(bpf_get_current_pid_tgid() >> 32);
+
+    if (!should_trace_pid(tgid)) {
+        return 0;
+    }
 
     evt = bpf_ringbuf_reserve(&events, sizeof(*evt), 0);
     if (!evt) {
@@ -644,6 +664,10 @@ static __always_inline int remember_open_path(const char *filename, long dirfd, 
     struct path_value *path;
     u32 zero = 0;
     u32 tgid = (u32)(pid_tgid >> 32);
+
+    if (!should_trace_pid(tgid)) {
+        return 0;
+    }
 
     path = bpf_map_lookup_elem(&path_heap, &zero);
     if (!path) {
@@ -731,6 +755,9 @@ int trace_write(struct enter_rw_ctx *ctx) {
     u64 pid_tgid = bpf_get_current_pid_tgid();
     u32 fd       = (u32)ctx->fd;
 
+    if (!should_trace_pid_tgid(pid_tgid)) {
+        return 0;
+    }
     if (ctx->count == 0) {
         return 0;
     }
@@ -763,9 +790,13 @@ int trace_exit_write(struct exit_ctx *ctx) {
 
 SEC("tracepoint/syscalls/sys_enter_mmap")
 int trace_mmap(struct enter_mmap_ctx *ctx) {
-    struct fd_key key = {.tgid = (u32)(bpf_get_current_pid_tgid() >> 32), .fd = (u32)ctx->fd};
+    u64 pid_tgid      = bpf_get_current_pid_tgid();
+    struct fd_key key = {.tgid = (u32)(pid_tgid >> 32), .fd = (u32)ctx->fd};
     struct path_value *path;
 
+    if (!should_trace_pid_tgid(pid_tgid)) {
+        return 0;
+    }
     if ((long)ctx->fd < 0) {
         return 0;
     }
@@ -787,8 +818,13 @@ int trace_mmap(struct enter_mmap_ctx *ctx) {
 
 SEC("tracepoint/syscalls/sys_enter_close")
 int trace_close(struct enter_close_ctx *ctx) {
-    struct fd_key key = {.tgid = (u32)(bpf_get_current_pid_tgid() >> 32), .fd = ctx->fd};
+    u64 pid_tgid      = bpf_get_current_pid_tgid();
+    struct fd_key key = {.tgid = (u32)(pid_tgid >> 32), .fd = ctx->fd};
     struct path_value *path;
+
+    if (!should_trace_pid_tgid(pid_tgid)) {
+        return 0;
+    }
 
     path = bpf_map_lookup_elem(&fd_paths, &key);
     if (!path) {

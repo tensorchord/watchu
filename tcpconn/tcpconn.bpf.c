@@ -6,6 +6,7 @@
 #include "bpf_core_read.h"
 #include "bpf_helpers.h"
 #include "bpf_tracing.h"
+#include "pid_filter.h"
 
 #define AF_INET 2
 #define AF_INET6 10
@@ -73,6 +74,9 @@ static __always_inline int remember_connect(struct sock *sk) {
     u64 key                   = (u64)sk;
     struct connect_meta value = {};
 
+    if (!should_trace_current_pid()) {
+        return 0;
+    }
     if (!sk) {
         return 0;
     }

@@ -16,6 +16,7 @@ import (
 	"github.com/phuslu/log"
 
 	"github.com/tensorchord/watchu/export"
+	"github.com/tensorchord/watchu/internal/pidfilter"
 	"github.com/tensorchord/watchu/internal/tool"
 )
 
@@ -50,9 +51,9 @@ type FileOpProbe struct {
 	policy   *Policy
 }
 
-func NewFileOpProbe(exporter *export.Exporter, policy *Policy) (*FileOpProbe, error) {
+func NewFileOpProbe(exporter *export.Exporter, policy *Policy, pidFilter *pidfilter.Filter) (*FileOpProbe, error) {
 	objs := fileopObjects{}
-	if err := loadFileopObjects(&objs, nil); err != nil {
+	if err := loadFileopObjects(&objs, pidFilter.CollectionOptions()); err != nil {
 		return nil, fmt.Errorf("failed to load fileop objects: %w", err)
 	}
 

@@ -16,6 +16,7 @@ import (
 	"github.com/tidwall/gjson"
 
 	"github.com/tensorchord/watchu/export"
+	"github.com/tensorchord/watchu/internal/pidfilter"
 	"github.com/tensorchord/watchu/internal/tool"
 )
 
@@ -92,9 +93,9 @@ type StdioProbe struct {
 	exporter *export.Exporter
 }
 
-func NewStdioProbe(exporter *export.Exporter) (*StdioProbe, error) {
+func NewStdioProbe(exporter *export.Exporter, pidFilter *pidfilter.Filter) (*StdioProbe, error) {
 	objs := stdioObjects{}
-	if err := loadStdioObjects(&objs, nil); err != nil {
+	if err := loadStdioObjects(&objs, pidFilter.CollectionOptions()); err != nil {
 		log.Error().Err(err).Msg("failed to load eBPF stdio spec")
 		return nil, err
 	}

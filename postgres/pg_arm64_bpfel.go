@@ -41,6 +41,7 @@ const (
 	pgMapFakeEventMap           = "_fake_event_map"
 	pgMapEvents                 = "events"
 	pgMapInflight               = "inflight"
+	pgMapTrackedPids            = "tracked_pids"
 	pgProgTracepointEnterClose  = "tracepoint_enter_close"
 	pgProgTracepointEnterSendto = "tracepoint_enter_sendto"
 )
@@ -98,6 +99,7 @@ type pgMapSpecs struct {
 	FakeEventMap *ebpf.MapSpec `ebpf:"_fake_event_map"`
 	Events       *ebpf.MapSpec `ebpf:"events"`
 	Inflight     *ebpf.MapSpec `ebpf:"inflight"`
+	TrackedPids  *ebpf.MapSpec `ebpf:"tracked_pids"`
 }
 
 // pgVariableSpecs contains global variables before they are loaded into the kernel.
@@ -129,6 +131,7 @@ type pgMaps struct {
 	FakeEventMap *ebpf.Map `ebpf:"_fake_event_map"`
 	Events       *ebpf.Map `ebpf:"events"`
 	Inflight     *ebpf.Map `ebpf:"inflight"`
+	TrackedPids  *ebpf.Map `ebpf:"tracked_pids"`
 }
 
 func (m *pgMaps) Close() error {
@@ -136,6 +139,7 @@ func (m *pgMaps) Close() error {
 		m.FakeEventMap,
 		m.Events,
 		m.Inflight,
+		m.TrackedPids,
 	)
 }
 

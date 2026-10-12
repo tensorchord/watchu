@@ -49,6 +49,7 @@ const (
 	sslMapEvents                = "events"
 	sslMapStartExMap            = "start_ex_map"
 	sslMapStartMap              = "start_map"
+	sslMapTrackedPids           = "tracked_pids"
 	sslProgProbeSslReadEntry    = "probe_ssl_read_entry"
 	sslProgProbeSslReadExEntry  = "probe_ssl_read_ex_entry"
 	sslProgProbeSslReadExExit   = "probe_ssl_read_ex_exit"
@@ -119,6 +120,7 @@ type sslMapSpecs struct {
 	Events       *ebpf.MapSpec `ebpf:"events"`
 	StartExMap   *ebpf.MapSpec `ebpf:"start_ex_map"`
 	StartMap     *ebpf.MapSpec `ebpf:"start_map"`
+	TrackedPids  *ebpf.MapSpec `ebpf:"tracked_pids"`
 }
 
 // sslVariableSpecs contains global variables before they are loaded into the kernel.
@@ -151,6 +153,7 @@ type sslMaps struct {
 	Events       *ebpf.Map `ebpf:"events"`
 	StartExMap   *ebpf.Map `ebpf:"start_ex_map"`
 	StartMap     *ebpf.Map `ebpf:"start_map"`
+	TrackedPids  *ebpf.Map `ebpf:"tracked_pids"`
 }
 
 func (m *sslMaps) Close() error {
@@ -159,6 +162,7 @@ func (m *sslMaps) Close() error {
 		m.Events,
 		m.StartExMap,
 		m.StartMap,
+		m.TrackedPids,
 	)
 }
 
